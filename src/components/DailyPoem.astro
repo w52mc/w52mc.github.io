@@ -2,8 +2,12 @@
 /**
  * 今日古诗词
  *
- * 首屏直接渲染一句本地诗词（构建时随机），页面打开立刻可见，不等待网络。
- * 客户端后台请求「今日诗词」接口，成功后替换；失败或超时则随机换一句本地诗词。
+ * 加载策略（关键）：
+ *   1. 服务端先渲染一句（构建时随机）—— 保证无 JS 时也有内容，且不会空白
+ *   2. 内联脚本在「首次绘制前」同步执行，立刻渲染一句诗（优先用上次缓存的接口诗句，
+ *      否则从本地库随机）—— 因此页面一出现就是最终内容，看不到"换句"的闪烁
+ *   3. 后台请求「今日诗词」接口，结果缓存起来供「下次刷新」使用
+ *      —— 所以每次刷新都是新的诗句，但本次不会替换，避免闪一下
  */
 import { poems } from "@/data/poems";
 
@@ -22,60 +26,66 @@ const initial = poems[idx]!;
   </blockquote>
 </section>
 
-<script>
-  import { poems } from "@/data/poems";
+<script
+  type="application/json"
+  id="poem-corpus"
+  set:html={JSON.stringify(poems)}
+></script>
 
-  const API = "https://v2.jinrishici.com/one.json";
+<script is:inline>
+  // 在首次绘制前同步执行：立刻决定显示哪一句，避免任何可见的"换句"
+  (function () {
+    var t = document.querySelector("[data-poem-text]");
+    var s = document.querySelector("[data-poem-source]");
+    if (!t || !s) return;
 
-  function render(text: string, source: string) {
-    const textEl = document.querySelector("[data-poem-text]");
-    const sourceEl = document.querySelector("[data-poem-source]");
-    if (textEl) (textEl as HTMLElement).textContent = text;
-    if (sourceEl) (sourceEl as HTMLElement).textContent = source;
-  }
-
-  function randomLocal() {
-    const poem = poems[Math.floor(Math.random() * poems.length)];
-    if (poem) render(poem.text, `—— ${poem.author}《${poem.title}》`);
-  }
-
-  async function loadPoem() {
+    // 优先使用上次接口取到的诗句
+    var cached = null;
     try {
-      // 4 秒超时，接口慢就直接用本地诗词，不再等待
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(API, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      cached = JSON.parse(localStorage.getItem("daily-poem") || "null");
+    } catch (e) {}
 
-      const json = await res.json();
-      const content: string | undefined = json?.data?.content;
-      if (!content) throw new Error("接口未返回诗句");
-
-      const origin = json?.data?.origin ?? {};
-      const author = origin.author ?? "";
-      const title = origin.title ? `《${origin.title}》` : "";
-      render(content, `—— ${author}${title}`.trim());
-    } catch {
-      randomLocal();
+    if (cached && cached.text) {
+      t.textContent = cached.text;
+      s.textContent = cached.source || "";
+      return;
     }
-  }
 
-  // 防抖：首次加载会同时触发 loadPoem() 和 astro:page-load，
-  // 1.5 秒内只允许请求一次，避免两句诗来回闪。
-  let lastFetch = 0;
-  function debouncedLoad() {
-    const now = Date.now();
-    if (now - lastFetch < 1500) return;
-    lastFetch = now;
-    loadPoem();
-  }
+    // 没有缓存就随机取一句本地诗词
+    try {
+      var el = document.getElementById("poem-corpus");
+      var list = JSON.parse(el.textContent);
+      var p = list[Math.floor(Math.random() * list.length)];
+      t.textContent = p.text;
+      s.textContent = "—— " + p.author + "《" + p.title + "》";
+    } catch (e) {}
+  })();
+</script>
 
-  debouncedLoad();
-  document.addEventListener("astro:page-load", debouncedLoad);
+<script>
+  // 后台预取，存起来供下次刷新使用（本次不替换，因此不会闪烁）
+  (async function () {
+    try {
+      const res = await fetch("https://v2.jinrishici.com/one.json", {
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      const d = json && json.data;
+      if (!d || !d.content) return;
+      const o = d.origin || {};
+      localStorage.setItem(
+        "daily-poem",
+        JSON.stringify({
+          text: d.content,
+          source:
+            "—— " + (o.author || "") + (o.title ? `《${o.title}》` : ""),
+        })
+      );
+    } catch {
+      // 接口不可用就继续用本地库，不影响显示
+    }
+  })();
 </script>
 
 <style>
