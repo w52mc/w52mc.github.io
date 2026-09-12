@@ -1,5 +1,7 @@
 <!--
-  江南小雨：淡墨雨丝匀速飘落，触底生涟漪。
+  江南烟雨：远/中/近三层淡墨雨丝随风斜落，远淡近浓；
+  各滴落点远近不一，触水处泛起两圈错开时序的墨色涟漪，
+  先快后慢地晕开，再渐渐淡去、压扁。
   data-astro-rerun 保证视图切换后重新绑定；尊重系统"减少动态效果"设置。
 -->
 <canvas id="rain-canvas" class="rain-canvas" aria-hidden="true"></canvas>
@@ -11,43 +13,55 @@
     if (!c || c.__raf) return;
     var ctx = c.getContext("2d");
     var DPR = Math.min(window.devicePixelRatio || 1, 2);
+    var T0 = performance.now();
+    var last = T0;
+    var RIPPLE_LIFE = 100; // 涟漪寿命，约 1.7s（60fps 折算）
 
-    // 淡墨色：亮背 0.18，暗背 0.22——两种主题下都清雅
-    var ink = "rgba(40, 45, 55, 0.18)";
-    var inkDark = "rgba(214, 222, 234, 0.22)";
-    function inkColor() {
-      return document.documentElement.getAttribute("data-theme") === "dark"
-        ? inkDark
-        : ink;
-    }
+    // 三层雨（远/中/近），参数顺序：
+    // [亮墨透明度, 暗墨透明度, 长度下限, 长度幅度, 速度下限, 速度幅度, 落点带上缘]
+    var LAYERS = [
+      [0.1, 0.13, 7, 5, 1.3, 0.6, 0.8],
+      [0.17, 0.21, 12, 6, 2.0, 0.7, 0.865],
+      [0.26, 0.32, 18, 8, 2.8, 0.8, 0.93],
+    ];
+    var SHARE = [0.45, 0.35, 0.2]; // 远处雨丝最密，朦胧成幕
 
-    var D = {
-      n: 0,         // 雨滴数
-      drops: [],    // {x,y,l,v}
-      ripples: [],  // {x,y,r,a,r2}
-      ground: 0,    // 涟发生线（地面）
-    };
+    var D = { layers: [[], [], []], ripples: [] };
 
-    function newDrop(any) {
+    function newDrop(L, filled) {
+      var p = LAYERS[L];
       return {
         x: Math.random() * c.__w,
-        y: any ? Math.random() * c.__h : -10,
-        l: 8 + Math.random() * 10,    // 短而细
-        v: 2.2 + Math.random() * 1.4, // 慢而匀
+        y: filled ? Math.random() * c.__h : -20,
+        l: p[2] + Math.random() * p[3],
+        v: p[4] + Math.random() * p[5],
+        g: c.__h * (p[6] + Math.random() * 0.065), // 各自落点，远高近低
       };
     }
+
+    function ripple(x, y) {
+      if (D.ripples.length > 120) return; // 大屏保险
+      var depth = Math.max(0, Math.min(1, (y / c.__h - 0.8) / 0.2)); // 越近的落点圈越大
+      var max = (12 + 20 * depth) * (0.85 + Math.random() * 0.3);
+      D.ripples.push({ x: x, y: y, max: max, t: 0 });
+      if (Math.random() < 0.65)
+        D.ripples.push({ x: x, y: y, max: max * 0.72, t: -0.28 }); // 第二圈迟些泛起
+    }
+
     function size() {
       c.__w = window.innerWidth;
       c.__h = window.innerHeight;
       c.width = c.__w * DPR;
       c.height = c.__h * DPR;
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      // 密度：约每 14px 一滴，但最多 160，保持稀疏
-      D.n = Math.min(160, (c.__w / 14) | 0);
-      D.drops = [];
-      for (var i = 0; i < D.n; i++) D.drops.push(newDrop(true));
-      // 地面线：屏幕下方 90% 处，涟漪集中在这里 ~ 之间
-      D.ground = c.__h;
+      ctx.lineCap = "round"; // 雨丝末端圆润，不生硬
+      D.ripples = [];
+      var n = Math.min(180, (c.__w / 12) | 0);
+      for (var L = 0; L < 3; L++) {
+        var s = Math.max(4, Math.round(n * SHARE[L]));
+        D.layers[L] = [];
+        for (var i = 0; i < s; i++) D.layers[L].push(newDrop(L, true));
+      }
     }
     size();
 
@@ -55,68 +69,78 @@
       window.__rainInit = 1;
       window.addEventListener("resize", function () {
         var el = document.getElementById("rain-canvas");
-        if (el && el.__raf) {
-          el.__raf = 0;
-          restart(el);
-        }
+        if (el && el.__resize) el.__resize();
       });
     }
-    function restart(el) {
-      if (el !== c) return;
+    // 挂在元素上而非闭包里：视图切换换新画布后，resize 仍能找到当前那块
+    c.__resize = function () {
+      c.__gen = (c.__gen || 0) + 1;
       size();
-      loop();
-    }
+      loop(c.__gen);
+    };
 
-    function loop() {
-      if (!c.isConnected) {
+    function loop(tok) {
+      if (tok !== c.__gen || !c.isConnected) {
         c.__raf = 0;
         return;
       }
-      var col = inkColor();
+      var now = performance.now();
+      var dtm = Math.min(3, Math.max(0.25, (now - last) / 16.667)); // 帧率无关
+      last = now;
+      var t = (now - T0) / 1000;
+      // 风：缓慢往复的斜角，雨随之整体飘移，偶尔wind≈0雨丝短暂悬直
+      var wind = 0.11 + 0.07 * Math.sin(t * 0.11) + 0.03 * Math.sin(t * 0.31 + 2);
+      var dark =
+        document.documentElement.getAttribute("data-theme") === "dark";
+      var rgb = dark ? "214,222,234" : "40,45,55";
       ctx.clearRect(0, 0, c.__w, c.__h);
-
-      // —— 雨丝 ——
-      ctx.strokeStyle = col;
       ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (var i = 0; i < D.drops.length; i++) {
-        var d = D.drops[i];
-        ctx.moveTo(d.x, d.y);
-        ctx.lineTo(d.x - d.l * 0.06, d.y + d.l);
-        d.y += d.v;
-        if (d.y >= D.ground) {
-          // 触底生涟漪
-          D.ripples.push({ x: d.x, y: D.ground - 2, r: 1, r2: 6 + Math.random() * 8, born: 0 });
-          D.drops[i] = newDrop(false);
+
+      // —— 雨丝：每层一次描边，淡墨深浅分远近 ——
+      for (var L = 0; L < 3; L++) {
+        ctx.strokeStyle = "rgba(" + rgb + "," + LAYERS[L][dark ? 1 : 0] + ")";
+        ctx.beginPath();
+        var arr = D.layers[L];
+        for (var i = 0; i < arr.length; i++) {
+          var d = arr[i];
+          ctx.moveTo(d.x, d.y);
+          ctx.lineTo(d.x + d.l * wind, d.y - d.l); // 雨尾顺着飘移方向
+          d.y += d.v * dtm;
+          d.x -= d.v * wind * dtm;
+          if (d.x < -30) d.x += c.__w + 60; // 随风飘出边界后绕回
+          else if (d.x > c.__w + 30) d.x -= c.__w + 60;
+          if (d.y >= d.g) {
+            ripple(d.x, d.g);
+            arr[i] = newDrop(L, false);
+          }
         }
+        ctx.stroke();
       }
-      ctx.stroke();
 
-      // —— 涟漪：淡墨圆环，扩散至 r2 后淡出 ——
-      ctx.lineWidth = 1;
+      // —— 涟漪：墨环先快后慢地晕开，渐渐淡去、压扁 ——
       for (var j = D.ripples.length - 1; j >= 0; j--) {
         var r = D.ripples[j];
-        r.r += 0.5;          // 匀速扩散
-        if (r.r >= r.r2) {
+        r.t += dtm / RIPPLE_LIFE;
+        if (r.t < 0) continue; // 第二圈的迟滞
+        if (r.t >= 1) {
           D.ripples.splice(j, 1);
           continue;
         }
-        var a = 1 - r.r / r.r2;
-        ctx.strokeStyle = ctx.globalAlpha = a * 0.35;
-        // 用 globalCompositeOperation 控制 alpha 较复杂，这里直接设 strokeStyle alpha
-        ctx.strokeStyle =
-          document.documentElement.getAttribute("data-theme") === "dark"
-            ? "rgba(214,222,234," + (a * 0.22).toFixed(3) + ")"
-            : "rgba(40,45,55," + (a * 0.3).toFixed(3) + ")";
+        var e = 1 - Math.pow(1 - r.t, 3); // easeOutCubic：先快后慢
+        var a = (dark ? 0.34 : 0.3) * Math.pow(1 - r.t, 1.6);
+        var rad = 1 + r.max * e;
+        ctx.strokeStyle = "rgba(" + rgb + "," + a.toFixed(3) + ")";
         ctx.beginPath();
-        ctx.ellipse(r.x, r.y, r.r, r.r * 0.32, 0, 0, Math.PI * 2);
+        ctx.ellipse(r.x, r.y, rad, rad * (0.34 - 0.12 * r.t), 0, 0, Math.PI * 2);
         ctx.stroke();
       }
-      ctx.globalAlpha = 1;
 
-      c.__raf = requestAnimationFrame(loop);
+      c.__raf = requestAnimationFrame(function () {
+        loop(tok);
+      });
     }
-    loop();
+    c.__gen = 1;
+    loop(1);
   })();
 </script>
 
