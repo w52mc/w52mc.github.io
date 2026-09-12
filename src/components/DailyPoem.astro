@@ -64,8 +64,18 @@ const initial = poems[idx]!;
     }
   }
 
-  loadPoem();
-  document.addEventListener("astro:page-load", loadPoem);
+  // 防抖：首次加载会同时触发 loadPoem() 和 astro:page-load，
+  // 1.5 秒内只允许请求一次，避免两句诗来回闪。
+  let lastFetch = 0;
+  function debouncedLoad() {
+    const now = Date.now();
+    if (now - lastFetch < 1500) return;
+    lastFetch = now;
+    loadPoem();
+  }
+
+  debouncedLoad();
+  document.addEventListener("astro:page-load", debouncedLoad);
 </script>
 
 <style>
