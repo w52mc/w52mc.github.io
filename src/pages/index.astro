@@ -5,6 +5,7 @@ import IconArrowRight from "@/assets/icons/IconArrowRight.svg";
 import Layout from "@/layouts/Layout.astro";
 import Header from "@/components/Header.astro";
 import Footer from "@/components/Footer.astro";
+import DailyPoem from "@/components/DailyPoem.astro";
 import Card from "@/components/Card.astro";
 import LinkButton from "@/components/LinkButton.astro";
 import { getSortedPosts } from "@/utils/getSortedPosts";
@@ -74,6 +75,10 @@ const homePath = getRelativeLocaleUrl(locale, "");
       </LinkButton>
     </div>
   </main>
+  <div class="app-layout">
+    <DailyPoem />
+  </div>
+
   <Footer />
 </Layout>
 

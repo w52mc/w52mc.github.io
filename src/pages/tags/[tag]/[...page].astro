@@ -7,6 +7,7 @@ import Main from "@/components/Main.astro";
 import Breadcrumb from "@/components/Breadcrumb.astro";
 import Card from "@/components/Card.astro";
 import Footer from "@/components/Footer.astro";
+import DailyPoem from "@/components/DailyPoem.astro";
 import Pagination from "@/components/Pagination.astro";
 import { getUniqueTags } from "@/utils/getUniqueTags";
 import { getSortedPosts } from "@/utils/getSortedPosts";
@@ -52,6 +53,10 @@ const t = useTranslations(locale);
   </Main>
 
   <Pagination {page} />
+
+  <div class="app-layout">
+    <DailyPoem />
+  </div>
 
   <Footer noMarginTop={page.lastPage > 1} />
 </Layout>

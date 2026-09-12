@@ -2,6 +2,7 @@
 import Layout from "@/layouts/Layout.astro";
 import Header from "@/components/Header.astro";
 import Footer from "@/components/Footer.astro";
+import DailyPoem from "@/components/DailyPoem.astro";
 import LinkButton from "@/components/LinkButton.astro";
 import { getRelativeLocaleUrl } from "astro:i18n";
 import { useTranslations } from "@/i18n";
@@ -30,6 +31,13 @@ const t = useTranslations(locale);
       </LinkButton>
     </div>
   </main>
+
+  <div class="app-layout">
+
+    <DailyPoem />
+
+  </div>
+
 
   <Footer />
 </Layout>
