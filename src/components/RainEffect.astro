@@ -1,5 +1,5 @@
 <!--
-  雨特效：全站覆盖、不挡交互（pointer-events: none）。
+  江南小雨：淡墨雨丝匀速飘落，触底生涟漪。
   data-astro-rerun 保证视图切换后重新绑定；尊重系统"减少动态效果"设置。
 -->
 <canvas id="rain-canvas" class="rain-canvas" aria-hidden="true"></canvas>
@@ -12,12 +12,28 @@
     var ctx = c.getContext("2d");
     var DPR = Math.min(window.devicePixelRatio || 1, 2);
 
-    function drop(any) {
+    // 淡墨色：亮背 0.18，暗背 0.22——两种主题下都清雅
+    var ink = "rgba(40, 45, 55, 0.18)";
+    var inkDark = "rgba(214, 222, 234, 0.22)";
+    function inkColor() {
+      return document.documentElement.getAttribute("data-theme") === "dark"
+        ? inkDark
+        : ink;
+    }
+
+    var D = {
+      n: 0,         // 雨滴数
+      drops: [],    // {x,y,l,v}
+      ripples: [],  // {x,y,r,a,r2}
+      ground: 0,    // 涟发生线（地面）
+    };
+
+    function newDrop(any) {
       return {
         x: Math.random() * c.__w,
-        y: any ? Math.random() * c.__h : -20,
-        l: 12 + Math.random() * 18,
-        v: 24 + Math.random() * 18,
+        y: any ? Math.random() * c.__h : -10,
+        l: 8 + Math.random() * 10,    // 短而细
+        v: 2.2 + Math.random() * 1.4, // 慢而匀
       };
     }
     function size() {
@@ -26,40 +42,78 @@
       c.width = c.__w * DPR;
       c.height = c.__h * DPR;
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      c.__drops = Array.from({ length: (c.__w / 12) | 0 }, function () {
-        return drop(true);
-      });
+      // 密度：约每 14px 一滴，但最多 160，保持稀疏
+      D.n = Math.min(160, (c.__w / 14) | 0);
+      D.drops = [];
+      for (var i = 0; i < D.n; i++) D.drops.push(newDrop(true));
+      // 地面线：屏幕下方 90% 处，涟漪集中在这里 ~ 之间
+      D.ground = c.__h;
     }
     size();
+
     if (!window.__rainInit) {
       window.__rainInit = 1;
       window.addEventListener("resize", function () {
         var el = document.getElementById("rain-canvas");
-        if (el && el.__raf) el.__raf = 0, start(el);
+        if (el && el.__raf) {
+          el.__raf = 0;
+          restart(el);
+        }
       });
     }
-    function start(el) {
+    function restart(el) {
       if (el !== c) return;
       size();
       loop();
     }
+
     function loop() {
       if (!c.isConnected) {
         c.__raf = 0;
         return;
       }
+      var col = inkColor();
       ctx.clearRect(0, 0, c.__w, c.__h);
-      ctx.strokeStyle = "rgba(148, 163, 184, 0.35)";
+
+      // —— 雨丝 ——
+      ctx.strokeStyle = col;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      for (var i = 0; i < c.__drops.length; i++) {
-        var d = c.__drops[i];
+      for (var i = 0; i < D.drops.length; i++) {
+        var d = D.drops[i];
         ctx.moveTo(d.x, d.y);
-        ctx.lineTo(d.x - d.l * 0.08, d.y + d.l);
+        ctx.lineTo(d.x - d.l * 0.06, d.y + d.l);
         d.y += d.v;
-        if (d.y > c.__h) c.__drops[i] = drop(false);
+        if (d.y >= D.ground) {
+          // 触底生涟漪
+          D.ripples.push({ x: d.x, y: D.ground - 2, r: 1, r2: 6 + Math.random() * 8, born: 0 });
+          D.drops[i] = newDrop(false);
+        }
       }
       ctx.stroke();
+
+      // —— 涟漪：淡墨圆环，扩散至 r2 后淡出 ——
+      ctx.lineWidth = 1;
+      for (var j = D.ripples.length - 1; j >= 0; j--) {
+        var r = D.ripples[j];
+        r.r += 0.5;          // 匀速扩散
+        if (r.r >= r.r2) {
+          D.ripples.splice(j, 1);
+          continue;
+        }
+        var a = 1 - r.r / r.r2;
+        ctx.strokeStyle = ctx.globalAlpha = a * 0.35;
+        // 用 globalCompositeOperation 控制 alpha 较复杂，这里直接设 strokeStyle alpha
+        ctx.strokeStyle =
+          document.documentElement.getAttribute("data-theme") === "dark"
+            ? "rgba(214,222,234," + (a * 0.22).toFixed(3) + ")"
+            : "rgba(40,45,55," + (a * 0.3).toFixed(3) + ")";
+        ctx.beginPath();
+        ctx.ellipse(r.x, r.y, r.r, r.r * 0.32, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
       c.__raf = requestAnimationFrame(loop);
     }
     loop();
