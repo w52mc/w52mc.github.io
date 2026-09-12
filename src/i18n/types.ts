@@ -14,6 +14,7 @@ export interface UIStrings {
     sharePostOn: string;
     sharePostViaEmail: string;
     tagLabel: string;
+    toc: string;
     backToTop: string;
     goBack: string;
     editPage: string;

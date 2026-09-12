@@ -1,0 +1,145 @@
+---
+import type { MarkdownHeading } from "astro";
+import { useTranslations } from "@/i18n";
+import config from "@/config";
+
+type Props = {
+  headings: MarkdownHeading[];
+};
+
+const { headings } = Astro.props;
+const locale = Astro.currentLocale ?? config.site.lang;
+const t = useTranslations(locale);
+
+// 只取 h2/h3：h3 挂到它前面那个 h2 之下，形成两级大纲
+type Item = {
+  slug: string;
+  text: string;
+  children: { slug: string; text: string }[];
+};
+
+const items: Item[] = [];
+for (const h of headings) {
+  if (h.depth === 2) items.push({ slug: h.slug, text: h.text, children: [] });
+  else if (h.depth === 3 && items.length)
+    items[items.length - 1].children.push({ slug: h.slug, text: h.text });
+}
+---
+
+{
+  items.length > 0 && (
+    <nav
+      data-toc
+      data-pagefind-ignore
+      aria-labelledby="toc-title"
+      class="text-muted-foreground text-sm"
+    >
+      <h2
+        id="toc-title"
+        class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase"
+      >
+        {t.post.toc}
+      </h2>
+      <ul class="space-y-1.5 border-s ps-3">
+        {items.map(item => (
+          <li>
+            <a
+              href={`#${item.slug}`}
+              class="hover:text-accent block leading-snug transition-colors"
+            >
+              {item.text}
+            </a>
+            {item.children.length > 0 && (
+              <ul class="mt-1.5 space-y-1.5 border-s ps-3">
+                {item.children.map(child => (
+                  <li>
+                    <a
+                      href={`#${child.slug}`}
+                      class="hover:text-accent block leading-snug transition-colors"
+                    >
+                      {child.text}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ul>
+    </nav>
+  )
+}
+
+<script is:inline data-astro-rerun>
+  (function () {
+    // 本脚本在 <article> 之前解析，此时标题还没进 DOM，必须等文档就绪；
+    // 视图切换（data-astro-rerun）时文档已是 complete，直接执行即可。
+    function init() {
+      var nav = document.querySelector("nav[data-toc]");
+      if (!nav) return;
+
+      // 视图切换会重跑本脚本：先撤掉上一次的监听，避免重复绑定
+      if (window.__tocCleanup) window.__tocCleanup();
+
+      // 只在本大纲的列表里取链接：页面的 addHeadingLinks() 会给标题追加 "#" 锚点，
+      // 若从整个 nav 里取，会先取到"目录"标题旁那个隐藏的 # 链接
+      var list = nav.querySelector("ul");
+      if (!list) return;
+      var links = Array.prototype.slice.call(
+        list.querySelectorAll('a[href^="#"]')
+      );
+      var items = [];
+      for (var i = 0; i < links.length; i++) {
+        var id = decodeURIComponent(links[i].getAttribute("href").slice(1));
+        var el = document.getElementById(id);
+        if (el) items.push({ a: links[i], el: el });
+      }
+      if (!items.length) return;
+
+      function activate(target) {
+        for (var i = 0; i < items.length; i++) {
+          var on = items[i].a === target;
+          items[i].a.classList.toggle("text-accent", on);
+          items[i].a.classList.toggle("font-medium", on);
+          if (on) items[i].a.setAttribute("aria-current", "true");
+          else items[i].a.removeAttribute("aria-current");
+        }
+      }
+
+      // 滚动高亮：取"最后一个已越过判定线的标题"
+      var ticking = false;
+      function update() {
+        ticking = false;
+        var current = items[0].a;
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].el.getBoundingClientRect().top <= 130)
+            current = items[i].a;
+          else break;
+        }
+        activate(current);
+      }
+      function onScroll() {
+        if (!ticking) {
+          ticking = true;
+          requestAnimationFrame(update);
+        }
+      }
+
+      window.addEventListener("scroll", onScroll, { passive: true });
+      window.addEventListener("resize", onScroll, { passive: true });
+      window.__tocCleanup = function () {
+        window.removeEventListener("scroll", onScroll);
+        window.removeEventListener("resize", onScroll);
+        window.__tocCleanup = null;
+      };
+
+      update();
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init, { once: true });
+    } else {
+      init();
+    }
+  })();
+</script>

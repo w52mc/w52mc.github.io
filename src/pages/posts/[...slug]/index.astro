@@ -15,6 +15,7 @@ import ShareLinks from "./_components/ShareLinks.astro";
 import BackButton from "./_components/BackButton.astro";
 import BackToTopButton from "./_components/BackToTopButton.astro";
 import AdjacentPostNav from "./_components/AdjacentPostNav.astro";
+import TableOfContents from "./_components/TableOfContents.astro";
 import config from "@/config";
 
 export async function getStaticPaths() {
@@ -74,7 +75,7 @@ const {
   hideEditPost,
 } = post.data;
 
-const { Content } = await render(post);
+const { Content, headings } = await render(post);
 
 let ogImageUrl: string | undefined;
 
@@ -135,16 +136,27 @@ const ogImage = ogImageUrl
       <EditPost {hideEditPost} {post} class="max-sm:hidden" />
     </div>
 
-    <article
-      id="article"
-      class:list={[
-        "mt-8 w-full",
-        "app-prose max-w-app",
-        "prose-pre:bg-(--shiki-light-bg) dark:prose-pre:bg-(--shiki-dark-bg)",
-      ]}
-    >
-      <Content />
-    </article>
+    <div class="relative">
+      {/* 大纲：绝对定位放进正文左侧的留白里，正文宽度与居中位置都不受影响 */}
+      <aside class="absolute inset-y-0 end-full me-6 hidden w-52 xl:block">
+        <div
+          class="sticky top-8 max-h-[calc(100dvh-4rem)] overflow-y-auto pe-1"
+        >
+          <TableOfContents {headings} />
+        </div>
+      </aside>
+
+      <article
+        id="article"
+        class:list={[
+          "mt-8 w-full",
+          "app-prose max-w-app",
+          "prose-pre:bg-(--shiki-light-bg) dark:prose-pre:bg-(--shiki-dark-bg)",
+        ]}
+      >
+        <Content />
+      </article>
+    </div>
 
     <hr class="my-8 border-dashed" />
 
@@ -203,9 +215,10 @@ const ogImage = ogImageUrl
   updateScrollProgress();
 
   function addHeadingLinks() {
-    const headings = Array.from(
-      document.querySelectorAll("h2, h3, h4, h5, h6")
-    );
+    // 只给正文标题加锚点链接：目录（nav）里的 h2 不是正文，别给它加 #
+    const article = document.getElementById("article");
+    if (!article) return;
+    const headings = Array.from(article.querySelectorAll("h2, h3, h4, h5, h6"));
     for (const heading of headings) {
       heading.classList.add("group");
       const link = document.createElement("a");
