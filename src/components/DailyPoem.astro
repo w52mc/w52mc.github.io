@@ -2,19 +2,22 @@
 /**
  * 今日古诗词
  *
- * 数据来自「今日诗词」开放接口 https://www.jinrishici.com
- * 每次刷新页面重新请求，因此每次看到的都不一样。
- *
- * 网络异常或接口不可用时，退回本地诗词库随机取一句（见 src/data/poems.ts）。
+ * 首屏直接渲染一句本地诗词（构建时随机），页面打开立刻可见，不等待网络。
+ * 客户端后台请求「今日诗词」接口，成功后替换；失败或超时则随机换一句本地诗词。
  */
 import { poems } from "@/data/poems";
+
+const idx = Math.floor(Math.random() * poems.length);
+const initial = poems[idx]!;
 ---
 
 <section class="poem" aria-label="今日古诗词">
   <blockquote class="poem-body">
     <p class="poem-item" data-poem>
-      <span class="poem-text" data-poem-text></span>
-      <cite class="poem-source" data-poem-source></cite>
+      <span class="poem-text" data-poem-text>{initial.text}</span>
+      <cite class="poem-source" data-poem-source
+        >—— {initial.author}《{initial.title}》</cite
+      >
     </p>
   </blockquote>
 </section>
@@ -27,32 +30,37 @@ import { poems } from "@/data/poems";
   function render(text: string, source: string) {
     const textEl = document.querySelector("[data-poem-text]");
     const sourceEl = document.querySelector("[data-poem-source]");
-    if (!textEl) return;
-    (textEl as HTMLElement).textContent = text;
+    if (textEl) (textEl as HTMLElement).textContent = text;
     if (sourceEl) (sourceEl as HTMLElement).textContent = source;
   }
 
-  function fallback() {
+  function randomLocal() {
     const poem = poems[Math.floor(Math.random() * poems.length)];
-    if (!poem) return;
-    render(poem.text, `—— ${poem.author}《${poem.title}》`);
+    if (poem) render(poem.text, `—— ${poem.author}《${poem.title}》`);
   }
 
   async function loadPoem() {
     try {
-      const res = await fetch(API, { cache: "no-store" });
+      // 4 秒超时，接口慢就直接用本地诗词，不再等待
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(API, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
       const json = await res.json();
-      const data = json?.data;
-      const content: string | undefined = data?.content;
+      const content: string | undefined = json?.data?.content;
       if (!content) throw new Error("接口未返回诗句");
 
-      const origin = data?.origin ?? {};
-      const author = origin.author ? `${origin.author}` : "";
+      const origin = json?.data?.origin ?? {};
+      const author = origin.author ?? "";
       const title = origin.title ? `《${origin.title}》` : "";
       render(content, `—— ${author}${title}`.trim());
     } catch {
-      fallback();
+      randomLocal();
     }
   }
 
@@ -82,7 +90,6 @@ import { poems } from "@/data/poems";
     font-family: "Songti SC", "STSong", "SimSun", Georgia, serif;
     font-size: 1.05rem;
     line-height: 1.9;
-    letter-spacing: 0.04em;
     color: var(--muted-foreground);
   }
 
@@ -91,7 +98,6 @@ import { poems } from "@/data/poems";
     margin-top: 0.6rem;
     font-size: 0.78rem;
     font-style: normal;
-    letter-spacing: 0.02em;
     color: var(--muted-foreground);
     opacity: 0.7;
   }
