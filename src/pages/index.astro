@@ -7,7 +7,6 @@ import Header from "@/components/Header.astro";
 import Footer from "@/components/Footer.astro";
 import Card from "@/components/Card.astro";
 import LinkButton from "@/components/LinkButton.astro";
-import YearProgress from "@/components/YearProgress.astro";
 import { getSortedPosts } from "@/utils/getSortedPosts";
 import { useTranslations } from "@/i18n";
 import config from "@/config";
@@ -30,12 +29,8 @@ const homePath = getRelativeLocaleUrl(locale, "");
     id="main-content"
     data-layout="index"
     data-home-path={homePath}
-    class="app-layout my-1"
+    class="app-layout mt-8"
   >
-    <section id="hero" class="pt-6">
-      <YearProgress />
-    </section>
-
     {
       featuredPosts.length > 0 && (
         <section
