@@ -35,14 +35,26 @@
 
     // ── 远景（mist-canvas）：淡彩三叠远山入雾、亮雾、镜面水影、扁舟 ──
     var WATER = 0.64; // 水平线（屏高比）：以下为水，雨点尽落水中
-    var RANGES = [ // 由远及近：[基线h比, 峰幅h比, 波长px, alpha]
-      [0.47, 0.075, 640, 0.13],
-      [0.53, 0.06, 440, 0.18],
-      [0.585, 0.045, 320, 0.23],
+    var RANGES = [ // 由远及近：[基线h比, 峰幅h比, 波长(占屏宽比), alpha]
+      [0.47, 0.075, 0.44, 0.13],
+      [0.53, 0.06, 0.31, 0.18],
+      [0.585, 0.045, 0.22, 0.23],
     ];
     var TREELINE = [0.575, 0.045, 0.42]; // 近岸树林：[基线h比, 起伏h比, alpha]
     var WASH = 1; // 全局浓淡总闸：整体调淡/调浓只改这一个数
-    var MT = { ready: false, theme: "", waterY: 0, boats: [] };
+
+    // 固定种子的伪随机：山形树形永远是同一幅，resize 重算也不会变样
+    var SEED = 20260912;
+    function mkRnd(s) {
+      return function () {
+        s = (s + 0x6d2b79f5) | 0;
+        var t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    var rnd = mkRnd(SEED);
+    var MT = { ready: false, theme: "", waterY: 0, boats: [], ops: [] };
 
     var D = { layers: [[], [], []], ripples: [] };
 
@@ -53,7 +65,7 @@
         y: filled ? Math.random() * c.__h : -20,
         l: p[2] + Math.random() * p[3],
         v: p[4] + Math.random() * p[5],
-        g: c.__h * (p[6] + Math.random() * p[7]), // 各自落点：远高近低，皆在水中
+        b: Math.random(), // 落点在落点带内的位置：存下来，resize 后不变
       };
     }
 
@@ -90,9 +102,33 @@
       }
     }
 
+    function paint(g2, w) {
+      // 把远景那批形状画到任意 2D 上下文（本体直接画；倒影用镜像变换后画同一批）
+      for (var i = 0; i < MT.ops.length; i++) {
+        var o = MT.ops[i];
+        if (o.haze) {
+          var hg = g2.createLinearGradient(0, o.y, 0, o.y + o.h);
+          hg.addColorStop(0, "rgba(" + o.rgb + ",0)");
+          hg.addColorStop(0.5, "rgba(" + o.rgb + "," + o.a.toFixed(3) + ")");
+          hg.addColorStop(1, "rgba(" + o.rgb + ",0)");
+          g2.fillStyle = hg;
+          g2.fillRect(0, o.y, w, o.h);
+        } else {
+          var fg = g2.createLinearGradient(0, o.y0, 0, o.y1);
+          fg.addColorStop(0, "rgba(" + o.rgb + "," + o.a0.toFixed(3) + ")");
+          fg.addColorStop(1, "rgba(" + o.rgb + "," + o.a1.toFixed(3) + ")");
+          g2.fillStyle = fg;
+          g2.fill(o.fill);
+        }
+      }
+    }
+
     function buildScene() {
-      // 远景离屏绘制：三叠淡彩远山（山脚没入雾）+ 近岸树林 + 水平线亮雾，
-      // 再以水平线为轴镜像成倒影。只在 size()/主题切换时重建。
+      // 远景：三叠淡彩远山 + 近岸树岛 + 水平亮雾；水线以下镜像成倒影。
+      // 两点要紧：① 形状由固定种子生成、尺寸全按屏宽屏高取比例，resize 只等比缩放；
+      //          ② 不用 ctx.filter 做模糊——Safari 不支持该 API，
+      //             一用就变成"Chrome 糊、Safari 清晰"的浏览器差异。
+      rnd = mkRnd(SEED); // 每次重建都从同一颗种子开始，山形恒定
       var w = c.__w, h = c.__h;
       var waterY = Math.round(h * WATER);
       var dark = MT.theme === "dark";
@@ -100,34 +136,25 @@
       var tree = dark ? "10,14,20" : "40,58,52"; // 近岸树林
       var mist = dark ? "150,166,190" : "255,255,255"; // 雾
       var mistK = dark ? 0.45 : 1; // 暗色下雾要收着些
-
-      var sc = document.createElement("canvas");
-      sc.width = w;
-      sc.height = h;
-      var g = sc.getContext("2d");
+      var ops = [];
 
       function haze(cy, hh, a) {
         // 一道横向雾带：拉开层与层的距离，即大气透视的魂
-        var gr = g.createLinearGradient(0, cy - hh, 0, cy + hh);
-        gr.addColorStop(0, "rgba(" + mist + ",0)");
-        gr.addColorStop(0.5, "rgba(" + mist + "," + (a * mistK).toFixed(3) + ")");
-        gr.addColorStop(1, "rgba(" + mist + ",0)");
-        g.fillStyle = gr;
-        g.fillRect(0, cy - hh, w, hh * 2);
+        ops.push({ haze: true, rgb: mist, a: a * mistK, y: cy - hh, h: hh * 2 });
       }
 
       function ridge(base, amp, wl) {
-        // 三重正弦缓峰：波长/相位随机，山形不重复
+        // 三重正弦缓峰；波长按屏宽取，构图随窗口等比缩放
         var shares = [0.5, 0.3, 0.2], wv = [];
         for (var k = 0; k < 3; k++)
           wv.push([
             amp * shares[k],
-            (Math.PI * 2) / ((wl / (1 + k * 1.8)) * (0.75 + Math.random() * 0.5)),
-            Math.random() * Math.PI * 2,
+            (Math.PI * 2) / ((wl / (1 + k * 1.8)) * (0.75 + rnd() * 0.5)),
+            rnd() * Math.PI * 2,
           ]);
         var p = new Path2D();
         p.moveTo(0, waterY + 2);
-        for (var x = 0; x <= w; x += 5) {
+        for (var x = 0; x <= w; x += 4) {
           var y = base;
           for (k = 0; k < 3; k++) y -= wv[k][0] * Math.sin(x * wv[k][1] + wv[k][2]);
           p.lineTo(x, y);
@@ -137,17 +164,17 @@
         return p;
       }
 
-      // 远山：山顶浓、山脚略淡（渐变的底只到 60%，绝不到 0——到 0 山体就断了），
-      // 越远越柔（blur 生雾），边缘不能是剪纸
+      // 远山：山顶浓、山脚略淡（渐变底只到 60%，到 0 山体就断了）
       for (var i = 0; i < RANGES.length; i++) {
-        var rg = RANGES[i], base = h * rg[0], amp = h * rg[1], a = rg[3] * WASH;
-        var grd = g.createLinearGradient(0, base - amp, 0, waterY);
-        grd.addColorStop(0, "rgba(" + ink + "," + a.toFixed(3) + ")");
-        grd.addColorStop(1, "rgba(" + ink + "," + (a * 0.6).toFixed(3) + ")");
-        g.fillStyle = grd;
-        g.filter = "blur(" + (2.6 - i * 0.7).toFixed(1) + "px)";
-        g.fill(ridge(base, amp, rg[2]));
-        g.filter = "none";
+        var rg = RANGES[i], base = h * rg[0], amp = h * rg[1];
+        ops.push({
+          fill: ridge(base, amp, rg[2] * w),
+          rgb: ink,
+          a0: rg[3] * WASH,
+          a1: rg[3] * WASH * 0.6,
+          y0: base - amp,
+          y1: waterY,
+        });
         if (i < RANGES.length - 1) haze(base + amp * 0.5, amp * 1.2, 0.5);
       }
 
@@ -157,29 +184,31 @@
       // 近岸树林：树冠高度按窗函数收到 0（两端真正沉入水中，否则就是两块灰方板）
       function land(x0, x1, base, amp, a) {
         var p = new Path2D(),
-          p1 = Math.random() * 6.28,
-          p2 = Math.random() * 6.28,
-          p3 = Math.random() * 6.28;
+          p1 = rnd() * 6.28,
+          p2 = rnd() * 6.28,
+          p3 = rnd() * 6.28;
         p.moveTo(x0, waterY + 2);
         for (var x = x0; x <= x1; x += 3) {
-          var win = Math.sin((Math.PI * (x - x0)) / (x1 - x0)); // 两岸没入水中
+          var u = (x - x0) / (x1 - x0); // 归一化：树形按岛宽缩放，不随窗口变形
+          var win = Math.sin(Math.PI * u); // 两岸没入水中
           var top =
-            amp * (0.55 + 0.45 * Math.sin(x * 0.02 + p1)) +
-            amp * 0.45 * Math.sin(x * 0.055 + p2) +
-            amp * 0.16 * Math.sin(x * 0.12 + p3);
+            amp * (0.55 + 0.45 * Math.sin(u * 11 + p1)) +
+            amp * 0.45 * Math.sin(u * 30 + p2) +
+            amp * 0.16 * Math.sin(u * 66 + p3);
           var y = waterY - (waterY - base + top) * win;
           if (y > waterY) y = waterY; // 树根不许越过水线
           p.lineTo(x, y);
         }
         p.lineTo(x1, waterY + 2);
         p.closePath();
-        var gr = g.createLinearGradient(0, base - amp, 0, waterY);
-        gr.addColorStop(0, "rgba(" + tree + "," + (a * WASH).toFixed(3) + ")");
-        gr.addColorStop(1, "rgba(" + tree + "," + (a * WASH * 0.8).toFixed(3) + ")");
-        g.fillStyle = gr;
-        g.filter = "blur(2.2px)";
-        g.fill(p);
-        g.filter = "none";
+        ops.push({
+          fill: p,
+          rgb: tree,
+          a0: a * WASH,
+          a1: a * WASH * 0.8,
+          y0: base - amp,
+          y1: waterY,
+        });
       }
       land(w * 0.18, w * 0.56, h * TREELINE[0], h * TREELINE[1], TREELINE[2]); // 主岛
       land(
@@ -191,25 +220,24 @@
       );
 
       haze(waterY - h * 0.004, h * 0.018, 0.35); // 水线前的一线亮光
-      MT.scene = sc;
+      MT.ops = ops;
 
       // 水色：水平线以下极淡一层青，把水面与天空分开
-      var wRgb = dark ? "120,140,168" : "110,135,155";
-      var wg = mctx.createLinearGradient(0, waterY, 0, h);
-      wg.addColorStop(0, "rgba(" + wRgb + "," + (0.07 * WASH).toFixed(3) + ")");
-      wg.addColorStop(1, "rgba(" + wRgb + "," + (0.012 * WASH).toFixed(3) + ")");
-      MT.waterGrad = wg;
+      MT.waterRgb = dark ? "120,140,168" : "110,135,155";
+      MT.waterA0 = 0.07 * WASH;
+      MT.waterA1 = 0.012 * WASH;
 
-      // 倒影：水平线为轴镜像，越往下越淡（水吸光）
+      // 倒影：按水平线镜像画同一批形状，再向下渐隐（水吸光）
       var rc = document.createElement("canvas");
-      rc.width = w;
-      rc.height = h;
+      rc.width = w * DPR;
+      rc.height = h * DPR;
       var r = rc.getContext("2d");
+      r.setTransform(DPR, 0, 0, DPR, 0, 0); // 按设备像素渲染：不放大，所以不发虚
       r.save();
       r.translate(0, waterY * 2);
       r.scale(1, -1);
-      r.globalAlpha = 0.35; // 倒影总比实体淡，且淡得快，下半屏才透气
-      r.drawImage(sc, 0, 0);
+      r.globalAlpha = 0.35; // 倒影总比实体淡
+      paint(r, w);
       r.restore();
       r.globalCompositeOperation = "destination-out";
       var mg = r.createLinearGradient(0, waterY, 0, h);
@@ -225,9 +253,9 @@
       // 扁舟：三叶，远近错落（d 越大离观者越近）
       var s0 = Math.max(0.8, Math.min(1.3, w / 1440));
       MT.boats = [
-        { x: w * 0.24, s: s0 * 0.62, d: 2, ph: Math.random() * 6.28, rod: 0 },
-        { x: w * 0.5, s: s0 * 0.85, d: 5, ph: Math.random() * 6.28, rod: 0 },
-        { x: w * 0.72, s: s0 * 1.05, d: 9, ph: Math.random() * 6.28, rod: 1 },
+        { x: w * 0.24, s: s0 * 0.62, d: 2, ph: rnd() * 6.28, rod: 0 },
+        { x: w * 0.5, s: s0 * 0.85, d: 5, ph: rnd() * 6.28, rod: 0 },
+        { x: w * 0.72, s: s0 * 1.05, d: 9, ph: rnd() * 6.28, rod: 1 },
       ];
       MT.waterY = waterY;
       MT.ready = true;
@@ -244,8 +272,14 @@
       var n = Math.min(180, (c.__w / 12) | 0);
       for (var L = 0; L < 3; L++) {
         var s = Math.max(4, Math.round(n * SHARE[L]));
-        D.layers[L] = [];
-        for (var i = 0; i < s; i++) D.layers[L].push(newDrop(L, true));
+        var arr = D.layers[L];
+        // 保留原有雨滴、只把坐标收进新窗口：拖窗口时雨不会一次次从头下
+        for (var i = 0; i < arr.length; i++) {
+          if (arr[i].x > c.__w) arr[i].x -= c.__w;
+          if (arr[i].y > c.__h) arr[i].y = -20;
+        }
+        while (arr.length > s) arr.pop();
+        while (arr.length < s) arr.push(newDrop(L, true));
       }
       if (mctx) {
         m.width = c.__w * DPR;
@@ -262,9 +296,14 @@
 
     if (!window.__rainInit) {
       window.__rainInit = 1;
+      // 防抖：拖窗口时 resize 一秒能触发几十次，逐个重建会让背景疯狂闪变
+      var rzT = 0;
       window.addEventListener("resize", function () {
-        var el = document.getElementById("rain-canvas");
-        if (el && el.__resize) el.__resize();
+        clearTimeout(rzT);
+        rzT = setTimeout(function () {
+          var el = document.getElementById("rain-canvas");
+          if (el && el.__resize) el.__resize();
+        }, 150);
       });
     }
     // 挂在元素上而非闭包里：视图切换换新画布后，resize 仍能找到当前那块
@@ -300,19 +339,32 @@
         }
         mctx.clearRect(0, 0, c.__w, c.__h);
         // 水色（压在倒影之下）
-        mctx.fillStyle = MT.waterGrad;
+        var wg = mctx.createLinearGradient(0, MT.waterY, 0, c.__h);
+        wg.addColorStop(0, "rgba(" + MT.waterRgb + "," + MT.waterA0.toFixed(3) + ")");
+        wg.addColorStop(1, "rgba(" + MT.waterRgb + "," + MT.waterA1.toFixed(3) + ")");
+        mctx.fillStyle = wg;
         mctx.fillRect(0, MT.waterY, c.__w, c.__h - MT.waterY);
-        // 倒影：横切分条，越靠画面下方摆动越大；条数够密才不会呈阶梯状断裂
+        // 倒影：横切分条，越靠画面下方摆动越大；源矩形按设备像素取
         var SL = 24, wh = c.__h - MT.waterY;
         for (var si = 0; si < SL; si++) {
           var y0 = MT.waterY + Math.round((wh * si) / SL);
           var y1 = MT.waterY + Math.round((wh * (si + 1)) / SL);
           var dp = si / SL;
           var sway = Math.sin(t * 0.7 + dp * 6.5) * (0.4 + 2.2 * dp * dp);
-          mctx.drawImage(MT.refl, 0, y0, c.__w, y1 - y0, sway, y0, c.__w, y1 - y0);
+          mctx.drawImage(
+            MT.refl,
+            0,
+            y0 * DPR,
+            c.__w * DPR,
+            (y1 - y0) * DPR,
+            sway,
+            y0,
+            c.__w,
+            y1 - y0
+          );
         }
-        // 远山本体
-        mctx.drawImage(MT.scene, 0, 0);
+        // 远山本体：直接按设备像素绘制，文字不受影响也不发虚
+        paint(mctx, c.__w);
         // 扁舟：极慢漂移、随波轻晃，各自带一痕倒影
         var bInk = dark ? "8,12,18" : "45,60,62";
         for (si = 0; si < MT.boats.length; si++) {
@@ -343,8 +395,8 @@
           d.x -= d.v * wind * dtm;
           if (d.x < -30) d.x += c.__w + 60; // 随风飘出边界后绕回
           else if (d.x > c.__w + 30) d.x -= c.__w + 60;
-          if (d.y >= d.g) {
-            ripple(d.x, d.g);
+          if (d.y >= c.__h * (LAYERS[L][6] + d.b * LAYERS[L][7])) {
+            ripple(d.x, c.__h * (LAYERS[L][6] + d.b * LAYERS[L][7]));
             arr[i] = newDrop(L, false);
           }
         }
