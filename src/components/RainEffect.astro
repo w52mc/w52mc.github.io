@@ -1,9 +1,12 @@
 <!--
   江南烟雨：远/中/近三层淡墨雨丝随风斜落，远淡近浓；
-  各滴落点远近不一，触水处泛起两圈错开时序的墨色涟漪，
-  先快后慢地晕开，再渐渐淡去、压扁。
+  各滴落点远近不一，触水处泛起两圈错开时序的墨色涟漪。
+  背景垫一块 mist-canvas（z-index:-1，位于正文之后）：
+  三层淡墨远山由随机正弦叠成缓峰，山脚渐隐入雾，
+  墨色以数十秒周期极慢呼吸——若隐若现，很淡。
   data-astro-rerun 保证视图切换后重新绑定；尊重系统"减少动态效果"设置。
 -->
+<canvas id="mist-canvas" class="mist-canvas" aria-hidden="true"></canvas>
 <canvas id="rain-canvas" class="rain-canvas" aria-hidden="true"></canvas>
 
 <script is:inline data-astro-rerun>
@@ -12,6 +15,8 @@
     var c = document.getElementById("rain-canvas");
     if (!c || c.__raf) return;
     var ctx = c.getContext("2d");
+    var m = document.getElementById("mist-canvas");
+    var mctx = m ? m.getContext("2d") : null;
     var DPR = Math.min(window.devicePixelRatio || 1, 2);
     var T0 = performance.now();
     var last = T0;
@@ -25,6 +30,14 @@
       [0.26, 0.32, 18, 8, 2.8, 0.8, 0.93],
     ];
     var SHARE = [0.45, 0.35, 0.2]; // 远处雨丝最密，朦胧成幕
+
+    // 三层远山：[基线h比, 峰幅h比, 亮墨alpha, 呼吸幅度, 呼吸周期s]
+    var MCONF = [
+      [0.64, 0.085, 0.05, 0.45, 41],
+      [0.73, 0.07, 0.07, 0.28, 57],
+      [0.83, 0.055, 0.092, 0.18, 73],
+    ];
+    var MT = { layers: [], theme: "" };
 
     var D = { layers: [[], [], []], ripples: [] };
 
@@ -48,6 +61,45 @@
         D.ripples.push({ x: x, y: y, max: max * 0.72, t: -0.28 }); // 第二圈迟些泛起
     }
 
+    function mountains() {
+      // 生成三层山的 Path2D；只在 size()（首次/resize）时调用
+      MT.layers = [];
+      var w = c.__w, h = c.__h;
+      var shares = [0.5, 0.3, 0.2], lens = [700, 380, 190];
+      for (var i = 0; i < 3; i++) {
+        var cf = MCONF[i];
+        var base = h * cf[0], amp = h * cf[1];
+        // 每层三重正弦缓峰：波长与相位随机，丘陵不重复
+        var wv = [];
+        for (var k = 0; k < 3; k++)
+          wv.push([
+            amp * shares[k],
+            (Math.PI * 2) / (lens[k] * (0.7 + Math.random() * 0.6)),
+            Math.random() * Math.PI * 2,
+          ]);
+        var path = new Path2D();
+        path.moveTo(0, h + 2);
+        for (var x = 0; x <= w; x += 6) {
+          var y = base;
+          for (k = 0; k < 3; k++) y -= wv[k][0] * Math.sin(x * wv[k][1] + wv[k][2]);
+          path.lineTo(x, y);
+        }
+        path.lineTo(w, h + 2);
+        path.closePath();
+        MT.layers.push({
+          path: path,
+          top: base - amp, // 渐变起点：峰顶墨最浓
+          a: cf[2],
+          bAmp: cf[3],
+          bP: cf[4],
+          bPh: Math.random() * Math.PI * 2,
+          mul: 1,
+          grad: null,
+        });
+      }
+      MT.theme = ""; // 强制下一帧按当前主题重建渐变
+    }
+
     function size() {
       c.__w = window.innerWidth;
       c.__h = window.innerHeight;
@@ -61,6 +113,12 @@
         var s = Math.max(4, Math.round(n * SHARE[L]));
         D.layers[L] = [];
         for (var i = 0; i < s; i++) D.layers[L].push(newDrop(L, true));
+      }
+      if (mctx) {
+        m.width = c.__w * DPR;
+        m.height = c.__h * DPR;
+        mctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        mountains();
       }
     }
     size();
@@ -88,13 +146,40 @@
       var dtm = Math.min(3, Math.max(0.25, (now - last) / 16.667)); // 帧率无关
       last = now;
       var t = (now - T0) / 1000;
-      // 风：缓慢往复的斜角，雨随之整体飘移，偶尔wind≈0雨丝短暂悬直
+      // 风：缓慢往复的斜角，雨随之整体飘移
       var wind = 0.11 + 0.07 * Math.sin(t * 0.11) + 0.03 * Math.sin(t * 0.31 + 2);
       var dark =
         document.documentElement.getAttribute("data-theme") === "dark";
       var rgb = dark ? "214,222,234" : "40,45,55";
       ctx.clearRect(0, 0, c.__w, c.__h);
       ctx.lineWidth = 1;
+
+      // —— 远山淡墨：山脚隐入雾，墨色极慢呼吸，若隐若现 ——
+      if (mctx) {
+        var th = dark ? "dark" : "light";
+        if (th !== MT.theme) {
+          MT.theme = th; // 主题切换时重建渐变色（挂在下一帧，成本可忽略）
+          for (var mi = 0; mi < MT.layers.length; mi++) {
+            var ly = MT.layers[mi];
+            ly.mul = dark ? 1.25 : 1; // 暗色下淡山稍浓
+            var g = mctx.createLinearGradient(0, ly.top, 0, c.__h);
+            g.addColorStop(0, "rgba(" + rgb + ",1)");
+            g.addColorStop(0.55, "rgba(" + rgb + ",0.5)");
+            g.addColorStop(1, "rgba(" + rgb + ",0)");
+            ly.grad = g;
+          }
+        }
+        mctx.clearRect(0, 0, c.__w, c.__h);
+        for (mi = 0; mi < MT.layers.length; mi++) {
+          ly = MT.layers[mi];
+          var breathe =
+            1 - ly.bAmp * (0.5 + 0.5 * Math.sin((t * Math.PI * 2) / ly.bP + ly.bPh));
+          mctx.globalAlpha = ly.a * ly.mul * breathe;
+          mctx.fillStyle = ly.grad;
+          mctx.fill(ly.path);
+        }
+        mctx.globalAlpha = 1;
+      }
 
       // —— 雨丝：每层一次描边，淡墨深浅分远近 ——
       for (var L = 0; L < 3; L++) {
@@ -145,6 +230,14 @@
 </script>
 
 <style>
+  .mist-canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: -1; /* 垫在正文之后、页面底色之上 */
+    pointer-events: none;
+  }
   .rain-canvas {
     position: fixed;
     inset: 0;
