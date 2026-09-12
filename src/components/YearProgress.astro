@@ -1,0 +1,65 @@
+---
+/**
+ * 年份进度条：显示今年已经过去的百分比
+ * 用来替代头部下方的普通横线
+ */
+
+const now = new Date();
+const year = now.getFullYear();
+
+const startOfYear = new Date(year, 0, 1).getTime();
+const startOfNextYear = new Date(year + 1, 0, 1).getTime();
+const elapsed = now.getTime() - startOfYear;
+const total = startOfNextYear - startOfYear;
+
+// 保留一位小数
+const percent = Math.min(100, Math.max(0, (elapsed / total) * 100));
+const percentLabel = percent.toFixed(1).replace(/\.0$/, "");
+---
+
+<div class="year-progress" title={`${year} 年已过去 ${percentLabel}%`}>
+  <span class="year-progress-label">
+    {year} 已过 {percentLabel}%
+  </span>
+  <span class="year-progress-track" aria-hidden="true">
+    <span class="year-progress-fill" style={`width: ${percent.toFixed(2)}%`}
+    ></span>
+  </span>
+</div>
+
+<style>
+  .year-progress {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.5rem 0 0;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+  }
+
+  .year-progress-label {
+    flex-shrink: 0;
+    letter-spacing: 0.01em;
+  }
+
+  .year-progress-track {
+    position: relative;
+    flex: 1;
+    height: 2px;
+    background: var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .year-progress-fill {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    background: var(--accent);
+    border-radius: 999px;
+    opacity: 0.75;
+  }
+</style>

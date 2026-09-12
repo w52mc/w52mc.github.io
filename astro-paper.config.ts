@@ -29,8 +29,16 @@ export default defineAstroPaperConfig({
     search: "pagefind",
   },
   socials: [
-    { name: "github", url: "https://github.com/w52mc" },
-    { name: "mail", url: "mailto:liujunhang2013@163.com" },
+    {
+      name: "github",
+      url: "https://github.com/w52mc",
+      linkTitle: "在 GitHub 上找到我",
+    },
+    {
+      name: "mail",
+      url: "mailto:liujunhang2013@163.com",
+      linkTitle: "给我发邮件",
+    },
   ],
   // 留空数组即可去掉文章底部的分享按钮
   shareLinks: [],
