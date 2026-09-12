@@ -180,7 +180,7 @@ if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
   MSG="$1"
   info "使用你指定的信息"
 else
-  # 改动里新增/修改的文章标题（不含草稿）
+  # 标题检测：先看本次改动的文章，没有再取最近的文章
   TITLES=$(git status --porcelain \
     | awk '{print $NF}' \
     | grep -E '^src/content/posts/.*\.(md|mdx)$' 2>/dev/null \
@@ -194,6 +194,15 @@ else
   POST_COUNT=0
   if [ -n "$TITLES" ]; then
     POST_COUNT=$(printf '%s\n' "$TITLES" | grep -c . || true)
+  fi
+
+  # 改动里没有文章（例如只删了一篇、或文章早已提交）：取最近修改的一篇标题
+  if [ "$POST_COUNT" -eq 0 ]; then
+    RECENT=$(ls -t src/content/posts/*.md src/content/posts/*.mdx 2>/dev/null | head -1)
+    if [ -n "$RECENT" ]; then
+      TITLES=$(awk '/^title:/{sub(/^title:[[:space:]]*/, ""); gsub(/^["'"'"']|["'"'"']$/, ""); print; exit}' "$RECENT")
+      [ -n "$TITLES" ] && POST_COUNT=1
+    fi
   fi
 
   if [ "$POST_COUNT" -gt 0 ]; then
