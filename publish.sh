@@ -82,10 +82,13 @@ else
       done \
     | head -3)
 
-  POST_COUNT=$(echo "$TITLES" | grep -c . 2>/dev/null || echo 0)
+  POST_COUNT=0
+  if [ -n "$TITLES" ]; then
+    POST_COUNT=$(printf '%s\n' "$TITLES" | grep -c . || true)
+  fi
 
   if [ "$POST_COUNT" -gt 0 ]; then
-    FIRST=$(echo "$TITLES" | head -1)
+    FIRST=$(printf '%s\n' "$TITLES" | head -1)
     if [ "$POST_COUNT" -eq 1 ]; then
       MSG="post: $FIRST"
     else
