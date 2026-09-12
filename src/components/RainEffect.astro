@@ -2,8 +2,9 @@
   江南烟雨：远/中/近三层淡墨雨丝随风斜落，远淡近浓；
   各滴落点远近不一，触水处泛起两圈错开时序的墨色涟漪。
   背景垫一块 mist-canvas（z-index:-1，位于正文之后）：
-  三层淡墨远山由随机正弦叠成缓峰，山脚渐隐入雾，
-  墨色以数十秒周期极慢呼吸——若隐若现，很淡。
+  以留白为魂——八成画面让给烟雨空濛，只留一抹淡墨远山
+  （右侧缓起一丘，左侧渐平远沉入水口，一角构图），
+  山脚隐入雾水；江上左侧一叶扁舟随波轻晃（寒江独钓）。
   data-astro-rerun 保证视图切换后重新绑定；尊重系统"减少动态效果"设置。
 -->
 <canvas id="mist-canvas" class="mist-canvas" aria-hidden="true"></canvas>
@@ -31,13 +32,9 @@
     ];
     var SHARE = [0.45, 0.35, 0.2]; // 远处雨丝最密，朦胧成幕
 
-    // 三层远山：[基线h比, 峰幅h比, 亮墨alpha, 呼吸幅度, 呼吸周期s]
-    var MCONF = [
-      [0.64, 0.085, 0.05, 0.45, 41],
-      [0.73, 0.07, 0.07, 0.28, 57],
-      [0.83, 0.055, 0.092, 0.18, 73],
-    ];
-    var MT = { layers: [], theme: "" };
+    // 一抹远山（一角构图）：[基线h比, 峰幅h比, 亮alpha, 呼吸幅度, 呼吸周期s]
+    var MCONF = [0.825, 0.1, 0.062, 0.22, 83];
+    var MT = { ridge: null, boat: null, theme: "" };
 
     var D = { layers: [[], [], []], ripples: [] };
 
@@ -62,41 +59,44 @@
     }
 
     function mountains() {
-      // 生成三层山的 Path2D；只在 size()（首次/resize）时调用
-      MT.layers = [];
+      // 一抹远山的 Path2D + 扁舟位置；只在 size()（首次/resize）时调用
       var w = c.__w, h = c.__h;
+      var base = h * MCONF[0], amp = h * MCONF[1];
+      // 三重正弦缓峰：波长/相位随机，山形不重复
       var shares = [0.5, 0.3, 0.2], lens = [700, 380, 190];
-      for (var i = 0; i < 3; i++) {
-        var cf = MCONF[i];
-        var base = h * cf[0], amp = h * cf[1];
-        // 每层三重正弦缓峰：波长与相位随机，丘陵不重复
-        var wv = [];
-        for (var k = 0; k < 3; k++)
-          wv.push([
-            amp * shares[k],
-            (Math.PI * 2) / (lens[k] * (0.7 + Math.random() * 0.6)),
-            Math.random() * Math.PI * 2,
-          ]);
-        var path = new Path2D();
-        path.moveTo(0, h + 2);
-        for (var x = 0; x <= w; x += 6) {
-          var y = base;
-          for (k = 0; k < 3; k++) y -= wv[k][0] * Math.sin(x * wv[k][1] + wv[k][2]);
-          path.lineTo(x, y);
-        }
-        path.lineTo(w, h + 2);
-        path.closePath();
-        MT.layers.push({
-          path: path,
-          top: base - amp, // 渐变起点：峰顶墨最浓
-          a: cf[2],
-          bAmp: cf[3],
-          bP: cf[4],
-          bPh: Math.random() * Math.PI * 2,
-          mul: 1,
-          grad: null,
-        });
+      var wv = [];
+      for (var k = 0; k < 3; k++)
+        wv.push([
+          amp * shares[k],
+          (Math.PI * 2) / (lens[k] * (0.7 + Math.random() * 0.6)),
+          Math.random() * Math.PI * 2,
+        ]);
+      var path = new Path2D();
+      path.moveTo(0, h + 2);
+      for (var x = 0; x <= w; x += 6) {
+        var y = base;
+        // 一角构图：左近平远沉入水口，往右渐起为丘
+        for (k = 0; k < 3; k++)
+          y -= wv[k][0] * Math.sin(x * wv[k][1] + wv[k][2]) * (0.22 + 0.78 * x / w);
+        path.lineTo(x, y);
       }
+      path.lineTo(w, h + 2);
+      path.closePath();
+      MT.ridge = {
+        path: path,
+        top: base - amp, // 渐变起点：峰顶墨最浓
+        a: MCONF[2],
+        bAmp: MCONF[3],
+        bP: MCONF[4],
+        bPh: Math.random() * Math.PI * 2,
+        mul: 1,
+        grad: null,
+      };
+      MT.boat = {
+        x0: w * 0.3, // 与右侧山势对角平衡
+        y: h * 0.845,
+        s: Math.max(0.9, Math.min(1.4, w / 1440)),
+      };
       MT.theme = ""; // 强制下一帧按当前主题重建渐变
     }
 
@@ -154,31 +154,49 @@
       ctx.clearRect(0, 0, c.__w, c.__h);
       ctx.lineWidth = 1;
 
-      // —— 远山淡墨：山脚隐入雾，墨色极慢呼吸，若隐若现 ——
-      if (mctx) {
+      // —— 远山一抹 + 一叶扁舟（mist 背景，留白为魂）——
+      if (mctx && MT.ridge) {
         var th = dark ? "dark" : "light";
         if (th !== MT.theme) {
-          MT.theme = th; // 主题切换时重建渐变色（挂在下一帧，成本可忽略）
-          for (var mi = 0; mi < MT.layers.length; mi++) {
-            var ly = MT.layers[mi];
-            ly.mul = dark ? 1.25 : 1; // 暗色下淡山稍浓
-            var g = mctx.createLinearGradient(0, ly.top, 0, c.__h);
-            g.addColorStop(0, "rgba(" + rgb + ",1)");
-            g.addColorStop(0.55, "rgba(" + rgb + ",0.5)");
-            g.addColorStop(1, "rgba(" + rgb + ",0)");
-            ly.grad = g;
-          }
+          MT.theme = th; // 主题切换时重建渐变（挂在下一帧，成本可忽略）
+          MT.ridge.mul = dark ? 1.3 : 1; // 暗色下淡山稍浓
+          var g = mctx.createLinearGradient(0, MT.ridge.top, 0, c.__h);
+          g.addColorStop(0, "rgba(" + rgb + ",1)");
+          g.addColorStop(0.5, "rgba(" + rgb + ",0.45)");
+          g.addColorStop(1, "rgba(" + rgb + ",0)"); // 山脚隐入雾水
+          MT.ridge.grad = g;
         }
         mctx.clearRect(0, 0, c.__w, c.__h);
-        for (mi = 0; mi < MT.layers.length; mi++) {
-          ly = MT.layers[mi];
-          var breathe =
-            1 - ly.bAmp * (0.5 + 0.5 * Math.sin((t * Math.PI * 2) / ly.bP + ly.bPh));
-          mctx.globalAlpha = ly.a * ly.mul * breathe;
-          mctx.fillStyle = ly.grad;
-          mctx.fill(ly.path);
-        }
+        // 远山：墨色极慢呼吸，若隐若现
+        var breathe =
+          1 - MT.ridge.bAmp * (0.5 + 0.5 * Math.sin((t * Math.PI * 2) / MT.ridge.bP + MT.ridge.bPh));
+        mctx.globalAlpha = MT.ridge.a * MT.ridge.mul * breathe;
+        mctx.fillStyle = MT.ridge.grad;
+        mctx.fill(MT.ridge.path);
+        // 扁舟：极慢漂移、随波轻晃（寒江独钓）
+        var B = MT.boat;
+        var bx = B.x0 + c.__w * 0.02 * Math.sin((t * Math.PI * 2) / 240);
+        var by = B.y + 1.3 * Math.sin((t * Math.PI * 2) / 9);
+        var hw = 17 * B.s;
+        var ink = "rgba(" + rgb + ",";
         mctx.globalAlpha = 1;
+        mctx.lineWidth = 1.6 * B.s;
+        mctx.strokeStyle = ink + (dark ? 0.55 : 0.5) + ")";
+        mctx.beginPath(); // 船身：一弯月牙
+        mctx.moveTo(bx - hw, by - 3);
+        mctx.bezierCurveTo(bx - hw * 0.45, by + 6, bx + hw * 0.45, by + 6, bx + hw, by - 4);
+        mctx.stroke();
+        mctx.beginPath(); // 乌篷
+        mctx.arc(bx - hw * 0.1, by - 5, 7.5 * B.s, Math.PI, Math.PI * 2);
+        mctx.closePath();
+        mctx.fillStyle = ink + (dark ? 0.45 : 0.4) + ")";
+        mctx.fill();
+        mctx.beginPath(); // 蓑翁执竿
+        mctx.moveTo(bx + hw * 0.35, by - 4);
+        mctx.lineTo(bx + hw * 0.35, by - 13);
+        mctx.moveTo(bx + hw * 0.35, by - 12);
+        mctx.lineTo(bx + hw + 24 * B.s, by + 2);
+        mctx.stroke();
       }
 
       // —— 雨丝：每层一次描边，淡墨深浅分远近 ——
