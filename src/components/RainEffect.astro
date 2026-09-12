@@ -1,10 +1,11 @@
 <!--
   江南烟雨：远/中/近三层淡墨雨丝随风斜落，远淡近浓；
-  各滴落点远近不一，触水处泛起两圈错开时序的墨色涟漪。
+  雨点落在远近不一的水面，泛起两圈错开时序的墨色涟漪。
   背景垫一块 mist-canvas（z-index:-1，位于正文之后）：
-  以留白为魂——八成画面让给烟雨空濛，只留一抹淡墨远山
-  （右侧缓起一丘，左侧渐平远沉入水口，一角构图），
-  山脚隐入雾水；江上左侧一叶扁舟随波轻晃（寒江独钓）。
+  上留白、下写水——淡彩三叠远山以大气透视层层入雾，
+  近岸树林是画面最重的一笔，水平线上一道亮雾；
+  水面如镜倒映全幅山影（分条微扭，随波轻漾），
+  三叶扁舟远近错落其上。整体浓淡由 WASH 一个数总控。
   data-astro-rerun 保证视图切换后重新绑定；尊重系统"减少动态效果"设置。
 -->
 <canvas id="mist-canvas" class="mist-canvas" aria-hidden="true"></canvas>
@@ -24,17 +25,24 @@
     var RIPPLE_LIFE = 100; // 涟漪寿命，约 1.7s（60fps 折算）
 
     // 三层雨（远/中/近），参数顺序：
-    // [亮墨透明度, 暗墨透明度, 长度下限, 长度幅度, 速度下限, 速度幅度, 落点带上缘]
+    // [亮墨透明度, 暗墨透明度, 长度下限, 长度幅度, 速度下限, 速度幅度, 落点带上缘, 落点带宽]
     var LAYERS = [
-      [0.1, 0.13, 7, 5, 1.3, 0.6, 0.8],
-      [0.17, 0.21, 12, 6, 2.0, 0.7, 0.865],
-      [0.26, 0.32, 18, 8, 2.8, 0.8, 0.93],
+      [0.1, 0.13, 7, 5, 1.3, 0.6, 0.64, 0.09],
+      [0.17, 0.21, 12, 6, 2.0, 0.7, 0.73, 0.09],
+      [0.26, 0.32, 18, 8, 2.8, 0.8, 0.82, 0.18],
     ];
     var SHARE = [0.45, 0.35, 0.2]; // 远处雨丝最密，朦胧成幕
 
-    // 一抹远山（一角构图）：[基线h比, 峰幅h比, 亮alpha, 呼吸幅度, 呼吸周期s]
-    var MCONF = [0.825, 0.1, 0.062, 0.22, 83];
-    var MT = { ridge: null, boat: null, theme: "" };
+    // ── 远景（mist-canvas）：淡彩三叠远山入雾、亮雾、镜面水影、扁舟 ──
+    var WATER = 0.64; // 水平线（屏高比）：以下为水，雨点尽落水中
+    var RANGES = [ // 由远及近：[基线h比, 峰幅h比, 波长px, alpha]
+      [0.47, 0.11, 640, 0.16],
+      [0.53, 0.085, 440, 0.22],
+      [0.585, 0.062, 320, 0.28],
+    ];
+    var TREELINE = [0.6, 0.06, 0.42]; // 近岸树林：[基线h比, 起伏h比, alpha]
+    var WASH = 1; // 全局浓淡总闸：整体调淡/调浓只改这一个数
+    var MT = { ready: false, theme: "", waterY: 0, boats: [] };
 
     var D = { layers: [[], [], []], ripples: [] };
 
@@ -45,59 +53,170 @@
         y: filled ? Math.random() * c.__h : -20,
         l: p[2] + Math.random() * p[3],
         v: p[4] + Math.random() * p[5],
-        g: c.__h * (p[6] + Math.random() * 0.065), // 各自落点，远高近低
+        g: c.__h * (p[6] + Math.random() * p[7]), // 各自落点：远高近低，皆在水中
       };
     }
 
     function ripple(x, y) {
       if (D.ripples.length > 120) return; // 大屏保险
-      var depth = Math.max(0, Math.min(1, (y / c.__h - 0.8) / 0.2)); // 越近的落点圈越大
-      var max = (12 + 20 * depth) * (0.85 + Math.random() * 0.3);
+      // 透视：离水平线越远的落点越近，涟漪越大
+      var depth = Math.max(0, Math.min(1, (y / c.__h - WATER) / (1 - WATER)));
+      var max = (6 + 28 * depth) * (0.85 + Math.random() * 0.3);
       D.ripples.push({ x: x, y: y, max: max, t: 0 });
       if (Math.random() < 0.65)
         D.ripples.push({ x: x, y: y, max: max * 0.72, t: -0.28 }); // 第二圈迟些泛起
     }
 
-    function mountains() {
-      // 一抹远山的 Path2D + 扁舟位置；只在 size()（首次/resize）时调用
-      var w = c.__w, h = c.__h;
-      var base = h * MCONF[0], amp = h * MCONF[1];
-      // 三重正弦缓峰：波长/相位随机，山形不重复
-      var shares = [0.5, 0.3, 0.2], lens = [700, 380, 190];
-      var wv = [];
-      for (var k = 0; k < 3; k++)
-        wv.push([
-          amp * shares[k],
-          (Math.PI * 2) / (lens[k] * (0.7 + Math.random() * 0.6)),
-          Math.random() * Math.PI * 2,
-        ]);
-      var path = new Path2D();
-      path.moveTo(0, h + 2);
-      for (var x = 0; x <= w; x += 6) {
-        var y = base;
-        // 一角构图：左近平远沉入水口，往右渐起为丘
-        for (k = 0; k < 3; k++)
-          y -= wv[k][0] * Math.sin(x * wv[k][1] + wv[k][2]) * (0.22 + 0.78 * x / w);
-        path.lineTo(x, y);
+    function drawBoat(g2, x, y, s, a, rgb2, rod) {
+      var hw = 16 * s, ink = "rgba(" + rgb2 + ",";
+      g2.lineWidth = 1.5 * s;
+      g2.strokeStyle = ink + a.toFixed(3) + ")";
+      g2.beginPath(); // 船身：一弯月牙
+      g2.moveTo(x - hw, y - 2 * s);
+      g2.bezierCurveTo(x - hw * 0.45, y + 5 * s, x + hw * 0.45, y + 5 * s, x + hw, y - 3 * s);
+      g2.stroke();
+      g2.beginPath(); // 乌篷
+      g2.arc(x - hw * 0.12, y - 4 * s, 6.5 * s, Math.PI, Math.PI * 2);
+      g2.closePath();
+      g2.fillStyle = ink + (a * 0.85).toFixed(3) + ")";
+      g2.fill();
+      if (rod) {
+        g2.beginPath(); // 蓑翁执竿
+        g2.moveTo(x + hw * 0.4, y - 3 * s);
+        g2.lineTo(x + hw * 0.4, y - 12 * s);
+        g2.moveTo(x + hw * 0.4, y - 11 * s);
+        g2.lineTo(x + hw + 22 * s, y + 2 * s);
+        g2.stroke();
       }
-      path.lineTo(w, h + 2);
-      path.closePath();
-      MT.ridge = {
-        path: path,
-        top: base - amp, // 渐变起点：峰顶墨最浓
-        a: MCONF[2],
-        bAmp: MCONF[3],
-        bP: MCONF[4],
-        bPh: Math.random() * Math.PI * 2,
-        mul: 1,
-        grad: null,
-      };
-      MT.boat = {
-        x0: w * 0.3, // 与右侧山势对角平衡
-        y: h * 0.845,
-        s: Math.max(0.9, Math.min(1.4, w / 1440)),
-      };
-      MT.theme = ""; // 强制下一帧按当前主题重建渐变
+    }
+
+    function buildScene() {
+      // 远景离屏绘制：三叠淡彩远山（山脚没入雾）+ 近岸树林 + 水平线亮雾，
+      // 再以水平线为轴镜像成倒影。只在 size()/主题切换时重建。
+      var w = c.__w, h = c.__h;
+      var waterY = Math.round(h * WATER);
+      var dark = MT.theme === "dark";
+      var ink = dark ? "150,168,192" : "100,130,160"; // 山色：淡彩青灰
+      var tree = dark ? "10,14,20" : "40,58,52"; // 近岸树林
+      var mist = dark ? "150,166,190" : "255,255,255"; // 雾
+      var mistK = dark ? 0.45 : 1; // 暗色下雾要收着些
+
+      var sc = document.createElement("canvas");
+      sc.width = w;
+      sc.height = h;
+      var g = sc.getContext("2d");
+
+      function haze(cy, hh, a) {
+        // 一道横向雾带：拉开层与层的距离，即大气透视的魂
+        var gr = g.createLinearGradient(0, cy - hh, 0, cy + hh);
+        gr.addColorStop(0, "rgba(" + mist + ",0)");
+        gr.addColorStop(0.5, "rgba(" + mist + "," + (a * mistK).toFixed(3) + ")");
+        gr.addColorStop(1, "rgba(" + mist + ",0)");
+        g.fillStyle = gr;
+        g.fillRect(0, cy - hh, w, hh * 2);
+      }
+
+      function ridge(base, amp, wl) {
+        // 三重正弦缓峰：波长/相位随机，山形不重复
+        var shares = [0.5, 0.3, 0.2], wv = [];
+        for (var k = 0; k < 3; k++)
+          wv.push([
+            amp * shares[k],
+            (Math.PI * 2) / ((wl / (1 + k * 1.8)) * (0.75 + Math.random() * 0.5)),
+            Math.random() * Math.PI * 2,
+          ]);
+        var p = new Path2D();
+        p.moveTo(0, waterY + 2);
+        for (var x = 0; x <= w; x += 5) {
+          var y = base;
+          for (k = 0; k < 3; k++) y -= wv[k][0] * Math.sin(x * wv[k][1] + wv[k][2]);
+          p.lineTo(x, y);
+        }
+        p.lineTo(w, waterY + 2);
+        p.closePath();
+        return p;
+      }
+
+      // 远山：山脚渐隐、越远越淡（大气透视）
+      for (var i = 0; i < RANGES.length; i++) {
+        var rg = RANGES[i], base = h * rg[0], amp = h * rg[1];
+        var grd = g.createLinearGradient(0, base - amp * 1.6, 0, waterY);
+        grd.addColorStop(0, "rgba(" + ink + "," + (rg[3] * WASH).toFixed(3) + ")");
+        grd.addColorStop(1, "rgba(" + ink + ",0)");
+        g.fillStyle = grd;
+        g.fill(ridge(base, amp, rg[2]));
+        if (i < RANGES.length - 1) haze(base + amp * 0.4, amp * 1.1, 0.55);
+      }
+
+      // 近岸树林：起伏树冠压在水平线上，是画面最重的一笔
+      function land(x0, x1, base, amp, a) {
+        var p = new Path2D(), p1 = Math.random() * 6.28, p2 = Math.random() * 6.28;
+        p.moveTo(x0, waterY + 2);
+        for (var x = x0; x <= x1; x += 4) {
+          var win = Math.sin((Math.PI * (x - x0)) / (x1 - x0)); // 两端没入水中
+          var y =
+            base -
+            amp * win * (0.5 + 0.5 * Math.sin(x * 0.012 + p1)) -
+            amp * 0.4 * win * Math.sin(x * 0.045 + p2);
+          p.lineTo(x, y);
+        }
+        p.lineTo(x1, waterY + 2);
+        p.closePath();
+        var gr = g.createLinearGradient(0, base - amp, 0, waterY);
+        gr.addColorStop(0, "rgba(" + tree + "," + (a * WASH).toFixed(3) + ")");
+        gr.addColorStop(1, "rgba(" + tree + "," + (a * WASH * 0.6).toFixed(3) + ")");
+        g.fillStyle = gr;
+        g.fill(p);
+      }
+      land(w * 0.05, w * 0.76, h * TREELINE[0], h * TREELINE[1], TREELINE[2]);
+      land(
+        w * 0.82,
+        w * 1.06,
+        h * (TREELINE[0] + 0.014),
+        h * TREELINE[1] * 0.78,
+        TREELINE[2] * 0.85
+      );
+
+      haze(waterY - h * 0.035, h * 0.055, 0.7); // 山根与水之间的亮雾
+      MT.scene = sc;
+
+      // 水色：水平线以下极淡一层青，把水面与天空分开
+      var wRgb = dark ? "120,140,168" : "110,135,155";
+      var wg = mctx.createLinearGradient(0, waterY, 0, h);
+      wg.addColorStop(0, "rgba(" + wRgb + "," + (0.1 * WASH).toFixed(3) + ")");
+      wg.addColorStop(1, "rgba(" + wRgb + "," + (0.02 * WASH).toFixed(3) + ")");
+      MT.waterGrad = wg;
+
+      // 倒影：水平线为轴镜像，越往下越淡（水吸光）
+      var rc = document.createElement("canvas");
+      rc.width = w;
+      rc.height = h;
+      var r = rc.getContext("2d");
+      r.save();
+      r.translate(0, waterY * 2);
+      r.scale(1, -1);
+      r.globalAlpha = 0.5; // 倒影总比实体淡
+      r.drawImage(sc, 0, 0);
+      r.restore();
+      r.globalCompositeOperation = "destination-out";
+      var mg = r.createLinearGradient(0, waterY, 0, h);
+      mg.addColorStop(0, "rgba(0,0,0,0)");
+      mg.addColorStop(0.45, "rgba(0,0,0,0.6)");
+      mg.addColorStop(1, "rgba(0,0,0,0.95)");
+      r.fillStyle = mg;
+      r.fillRect(0, waterY, w, h - waterY);
+      r.globalCompositeOperation = "source-over";
+      MT.refl = rc;
+
+      // 扁舟：三叶，远近错落（d 越大离观者越近）
+      var s0 = Math.max(0.8, Math.min(1.3, w / 1440));
+      MT.boats = [
+        { x: w * 0.24, s: s0 * 0.62, d: 2, ph: Math.random() * 6.28, rod: 0 },
+        { x: w * 0.5, s: s0 * 0.85, d: 5, ph: Math.random() * 6.28, rod: 0 },
+        { x: w * 0.72, s: s0 * 1.05, d: 9, ph: Math.random() * 6.28, rod: 1 },
+      ];
+      MT.waterY = waterY;
+      MT.ready = true;
     }
 
     function size() {
@@ -118,7 +237,11 @@
         m.width = c.__w * DPR;
         m.height = c.__h * DPR;
         mctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-        mountains();
+        MT.theme =
+          document.documentElement.getAttribute("data-theme") === "dark"
+            ? "dark"
+            : "light";
+        buildScene();
       }
     }
     size();
@@ -154,49 +277,43 @@
       ctx.clearRect(0, 0, c.__w, c.__h);
       ctx.lineWidth = 1;
 
-      // —— 远山一抹 + 一叶扁舟（mist 背景，留白为魂）——
-      if (mctx && MT.ridge) {
+      // —— 远景：三叠远山入雾 + 镜面水影 + 扁舟（留白为魂）——
+      if (mctx && MT.ready) {
         var th = dark ? "dark" : "light";
         if (th !== MT.theme) {
-          MT.theme = th; // 主题切换时重建渐变（挂在下一帧，成本可忽略）
-          MT.ridge.mul = dark ? 1.3 : 1; // 暗色下淡山稍浓
-          var g = mctx.createLinearGradient(0, MT.ridge.top, 0, c.__h);
-          g.addColorStop(0, "rgba(" + rgb + ",1)");
-          g.addColorStop(0.5, "rgba(" + rgb + ",0.45)");
-          g.addColorStop(1, "rgba(" + rgb + ",0)"); // 山脚隐入雾水
-          MT.ridge.grad = g;
+          MT.theme = th; // 主题切换：整幅重建（换色，成本可忽略）
+          buildScene();
         }
         mctx.clearRect(0, 0, c.__w, c.__h);
-        // 远山：墨色极慢呼吸，若隐若现
-        var breathe =
-          1 - MT.ridge.bAmp * (0.5 + 0.5 * Math.sin((t * Math.PI * 2) / MT.ridge.bP + MT.ridge.bPh));
-        mctx.globalAlpha = MT.ridge.a * MT.ridge.mul * breathe;
-        mctx.fillStyle = MT.ridge.grad;
-        mctx.fill(MT.ridge.path);
-        // 扁舟：极慢漂移、随波轻晃（寒江独钓）
-        var B = MT.boat;
-        var bx = B.x0 + c.__w * 0.02 * Math.sin((t * Math.PI * 2) / 240);
-        var by = B.y + 1.3 * Math.sin((t * Math.PI * 2) / 9);
-        var hw = 17 * B.s;
-        var ink = "rgba(" + rgb + ",";
-        mctx.globalAlpha = 1;
-        mctx.lineWidth = 1.6 * B.s;
-        mctx.strokeStyle = ink + (dark ? 0.55 : 0.5) + ")";
-        mctx.beginPath(); // 船身：一弯月牙
-        mctx.moveTo(bx - hw, by - 3);
-        mctx.bezierCurveTo(bx - hw * 0.45, by + 6, bx + hw * 0.45, by + 6, bx + hw, by - 4);
-        mctx.stroke();
-        mctx.beginPath(); // 乌篷
-        mctx.arc(bx - hw * 0.1, by - 5, 7.5 * B.s, Math.PI, Math.PI * 2);
-        mctx.closePath();
-        mctx.fillStyle = ink + (dark ? 0.45 : 0.4) + ")";
-        mctx.fill();
-        mctx.beginPath(); // 蓑翁执竿
-        mctx.moveTo(bx + hw * 0.35, by - 4);
-        mctx.lineTo(bx + hw * 0.35, by - 13);
-        mctx.moveTo(bx + hw * 0.35, by - 12);
-        mctx.lineTo(bx + hw + 24 * B.s, by + 2);
-        mctx.stroke();
+        // 水色（压在倒影之下）
+        mctx.fillStyle = MT.waterGrad;
+        mctx.fillRect(0, MT.waterY, c.__w, c.__h - MT.waterY);
+        // 倒影：横切分条，越靠画面下方摆动越大，水面因之活起来
+        var SL = 16, wh = c.__h - MT.waterY;
+        for (var si = 0; si < SL; si++) {
+          var y0 = MT.waterY + Math.round((wh * si) / SL);
+          var y1 = MT.waterY + Math.round((wh * (si + 1)) / SL);
+          var dp = si / SL;
+          var sway = Math.sin(t * 0.7 + dp * 6.5) * (0.5 + 3 * dp * dp);
+          mctx.drawImage(MT.refl, 0, y0, c.__w, y1 - y0, sway, y0, c.__w, y1 - y0);
+        }
+        // 远山本体
+        mctx.drawImage(MT.scene, 0, 0);
+        // 扁舟：极慢漂移、随波轻晃，各自带一痕倒影
+        var bInk = dark ? "8,12,18" : "45,60,62";
+        for (si = 0; si < MT.boats.length; si++) {
+          var B = MT.boats[si];
+          var bx = B.x + c.__w * 0.012 * Math.sin((t * Math.PI * 2) / 210 + B.ph);
+          var by = MT.waterY + B.d + 1.1 * Math.sin((t * Math.PI * 2) / 8 + B.ph);
+          mctx.save();
+          mctx.translate(0, by * 1.7);
+          mctx.scale(1, -0.7); // 倒影略压扁
+          mctx.globalAlpha = 0.3;
+          drawBoat(mctx, bx, by, B.s, 1, bInk, B.rod);
+          mctx.restore();
+          mctx.globalAlpha = 1;
+          drawBoat(mctx, bx, by, B.s, (dark ? 0.5 : 0.42) * WASH, bInk, B.rod);
+        }
       }
 
       // —— 雨丝：每层一次描边，淡墨深浅分远近 ——
