@@ -36,11 +36,11 @@
     // ── 远景（mist-canvas）：淡彩三叠远山入雾、亮雾、镜面水影、扁舟 ──
     var WATER = 0.64; // 水平线（屏高比）：以下为水，雨点尽落水中
     var RANGES = [ // 由远及近：[基线h比, 峰幅h比, 波长px, alpha]
-      [0.47, 0.11, 640, 0.16],
-      [0.53, 0.085, 440, 0.22],
-      [0.585, 0.062, 320, 0.28],
+      [0.47, 0.075, 640, 0.13],
+      [0.53, 0.06, 440, 0.18],
+      [0.585, 0.045, 320, 0.23],
     ];
-    var TREELINE = [0.6, 0.06, 0.42]; // 近岸树林：[基线h比, 起伏h比, alpha]
+    var TREELINE = [0.575, 0.045, 0.42]; // 近岸树林：[基线h比, 起伏h比, alpha]
     var WASH = 1; // 全局浓淡总闸：整体调淡/调浓只改这一个数
     var MT = { ready: false, theme: "", waterY: 0, boats: [] };
 
@@ -137,54 +137,67 @@
         return p;
       }
 
-      // 远山：山脚渐隐、越远越淡（大气透视）
+      // 远山：山顶浓、山脚略淡（渐变的底只到 60%，绝不到 0——到 0 山体就断了），
+      // 越远越柔（blur 生雾），边缘不能是剪纸
       for (var i = 0; i < RANGES.length; i++) {
-        var rg = RANGES[i], base = h * rg[0], amp = h * rg[1];
-        var grd = g.createLinearGradient(0, base - amp * 1.6, 0, waterY);
-        grd.addColorStop(0, "rgba(" + ink + "," + (rg[3] * WASH).toFixed(3) + ")");
-        grd.addColorStop(1, "rgba(" + ink + ",0)");
+        var rg = RANGES[i], base = h * rg[0], amp = h * rg[1], a = rg[3] * WASH;
+        var grd = g.createLinearGradient(0, base - amp, 0, waterY);
+        grd.addColorStop(0, "rgba(" + ink + "," + a.toFixed(3) + ")");
+        grd.addColorStop(1, "rgba(" + ink + "," + (a * 0.6).toFixed(3) + ")");
         g.fillStyle = grd;
+        g.filter = "blur(" + (2.6 - i * 0.7).toFixed(1) + "px)";
         g.fill(ridge(base, amp, rg[2]));
-        if (i < RANGES.length - 1) haze(base + amp * 0.4, amp * 1.1, 0.55);
+        g.filter = "none";
+        if (i < RANGES.length - 1) haze(base + amp * 0.5, amp * 1.2, 0.5);
       }
 
-      // 近岸树林：起伏树冠压在水平线上，是画面最重的一笔
+      // 一道水平亮雾：统一横切所有远山的山脚，令其齐齐没入雾中
+      haze(waterY - h * 0.022, h * 0.034, 0.7);
+
+      // 近岸树林：树冠高度按窗函数收到 0（两端真正沉入水中，否则就是两块灰方板）
       function land(x0, x1, base, amp, a) {
-        var p = new Path2D(), p1 = Math.random() * 6.28, p2 = Math.random() * 6.28;
+        var p = new Path2D(),
+          p1 = Math.random() * 6.28,
+          p2 = Math.random() * 6.28,
+          p3 = Math.random() * 6.28;
         p.moveTo(x0, waterY + 2);
-        for (var x = x0; x <= x1; x += 4) {
-          var win = Math.sin((Math.PI * (x - x0)) / (x1 - x0)); // 两端没入水中
-          var y =
-            base -
-            amp * win * (0.5 + 0.5 * Math.sin(x * 0.012 + p1)) -
-            amp * 0.4 * win * Math.sin(x * 0.045 + p2);
+        for (var x = x0; x <= x1; x += 3) {
+          var win = Math.sin((Math.PI * (x - x0)) / (x1 - x0)); // 两岸没入水中
+          var top =
+            amp * (0.55 + 0.45 * Math.sin(x * 0.02 + p1)) +
+            amp * 0.45 * Math.sin(x * 0.055 + p2) +
+            amp * 0.16 * Math.sin(x * 0.12 + p3);
+          var y = waterY - (waterY - base + top) * win;
+          if (y > waterY) y = waterY; // 树根不许越过水线
           p.lineTo(x, y);
         }
         p.lineTo(x1, waterY + 2);
         p.closePath();
         var gr = g.createLinearGradient(0, base - amp, 0, waterY);
         gr.addColorStop(0, "rgba(" + tree + "," + (a * WASH).toFixed(3) + ")");
-        gr.addColorStop(1, "rgba(" + tree + "," + (a * WASH * 0.6).toFixed(3) + ")");
+        gr.addColorStop(1, "rgba(" + tree + "," + (a * WASH * 0.8).toFixed(3) + ")");
         g.fillStyle = gr;
+        g.filter = "blur(2.2px)";
         g.fill(p);
+        g.filter = "none";
       }
-      land(w * 0.05, w * 0.76, h * TREELINE[0], h * TREELINE[1], TREELINE[2]);
+      land(w * 0.18, w * 0.56, h * TREELINE[0], h * TREELINE[1], TREELINE[2]); // 主岛
       land(
-        w * 0.82,
-        w * 1.06,
-        h * (TREELINE[0] + 0.014),
-        h * TREELINE[1] * 0.78,
-        TREELINE[2] * 0.85
+        w * 0.68,
+        w * 0.9,
+        h * (TREELINE[0] + 0.003),
+        h * TREELINE[1] * 0.62,
+        TREELINE[2] * 0.82
       );
 
-      haze(waterY - h * 0.035, h * 0.055, 0.7); // 山根与水之间的亮雾
+      haze(waterY - h * 0.004, h * 0.018, 0.35); // 水线前的一线亮光
       MT.scene = sc;
 
       // 水色：水平线以下极淡一层青，把水面与天空分开
       var wRgb = dark ? "120,140,168" : "110,135,155";
       var wg = mctx.createLinearGradient(0, waterY, 0, h);
-      wg.addColorStop(0, "rgba(" + wRgb + "," + (0.1 * WASH).toFixed(3) + ")");
-      wg.addColorStop(1, "rgba(" + wRgb + "," + (0.02 * WASH).toFixed(3) + ")");
+      wg.addColorStop(0, "rgba(" + wRgb + "," + (0.07 * WASH).toFixed(3) + ")");
+      wg.addColorStop(1, "rgba(" + wRgb + "," + (0.012 * WASH).toFixed(3) + ")");
       MT.waterGrad = wg;
 
       // 倒影：水平线为轴镜像，越往下越淡（水吸光）
@@ -195,14 +208,15 @@
       r.save();
       r.translate(0, waterY * 2);
       r.scale(1, -1);
-      r.globalAlpha = 0.5; // 倒影总比实体淡
+      r.globalAlpha = 0.35; // 倒影总比实体淡，且淡得快，下半屏才透气
       r.drawImage(sc, 0, 0);
       r.restore();
       r.globalCompositeOperation = "destination-out";
       var mg = r.createLinearGradient(0, waterY, 0, h);
       mg.addColorStop(0, "rgba(0,0,0,0)");
-      mg.addColorStop(0.45, "rgba(0,0,0,0.6)");
-      mg.addColorStop(1, "rgba(0,0,0,0.95)");
+      mg.addColorStop(0.3, "rgba(0,0,0,0.5)");
+      mg.addColorStop(0.6, "rgba(0,0,0,0.9)");
+      mg.addColorStop(1, "rgba(0,0,0,1)");
       r.fillStyle = mg;
       r.fillRect(0, waterY, w, h - waterY);
       r.globalCompositeOperation = "source-over";
@@ -288,13 +302,13 @@
         // 水色（压在倒影之下）
         mctx.fillStyle = MT.waterGrad;
         mctx.fillRect(0, MT.waterY, c.__w, c.__h - MT.waterY);
-        // 倒影：横切分条，越靠画面下方摆动越大，水面因之活起来
-        var SL = 16, wh = c.__h - MT.waterY;
+        // 倒影：横切分条，越靠画面下方摆动越大；条数够密才不会呈阶梯状断裂
+        var SL = 24, wh = c.__h - MT.waterY;
         for (var si = 0; si < SL; si++) {
           var y0 = MT.waterY + Math.round((wh * si) / SL);
           var y1 = MT.waterY + Math.round((wh * (si + 1)) / SL);
           var dp = si / SL;
-          var sway = Math.sin(t * 0.7 + dp * 6.5) * (0.5 + 3 * dp * dp);
+          var sway = Math.sin(t * 0.7 + dp * 6.5) * (0.4 + 2.2 * dp * dp);
           mctx.drawImage(MT.refl, 0, y0, c.__w, y1 - y0, sway, y0, c.__w, y1 - y0);
         }
         // 远山本体
