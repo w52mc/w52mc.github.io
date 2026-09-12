@@ -64,6 +64,31 @@ info "共 $CHANGED 个文件有改动："
 git status --short | head -15 | sed 's/^/    /'
 [ "$CHANGED" -gt 15 ] && info "    ${DIM}…还有 $((CHANGED - 15)) 个${RESET}"
 
+# 草稿文件：draft: true —— 只在本地保留，绝不提交
+DRAFTS=$(git status --porcelain \
+  | awk '{print $NF}' \
+  | grep -E '^src/content/posts/.*\.(md|mdx)$' 2>/dev/null \
+  | while read -r f; do
+      [ -f "$f" ] || continue
+      grep -qiE '^draft:[[:space:]]*true' "$f" && printf '%s\n' "$f"
+    done) || true
+
+DRAFT_COUNT=0
+if [ -n "${DRAFTS:-}" ]; then
+  DRAFT_COUNT=$(printf '%s\n' "$DRAFTS" | grep -c . || true)
+fi
+
+if [ "$DRAFT_COUNT" -gt 0 ]; then
+  printf '\n'
+  warn "发现 $DRAFT_COUNT 篇草稿（draft: true），本次不会提交："
+  printf '%s\n' "$DRAFTS" | while read -r f; do
+    [ -n "$f" ] || continue
+    t=$(awk '/^title:/{sub(/^title:[[:space:]]*/, ""); gsub(/^["'"'"']|["'"'"']$/, ""); print; exit}' "$f")
+    info "    ${DIM}·${RESET} ${t:-$(basename "$f")}"
+  done
+  info "  ${DIM}要发布草稿：把文件里的 draft: true 改成 draft: false${RESET}"
+fi
+
 # ── 3. 生成提交信息 ───────────────────────────────────────────────────
 
 step "生成提交信息"
@@ -72,12 +97,13 @@ if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
   MSG="$1"
   info "使用你指定的信息"
 else
-  # 改动里新增/修改的文章标题
+  # 改动里新增/修改的文章标题（不含草稿）
   TITLES=$(git status --porcelain \
     | awk '{print $NF}' \
     | grep -E '^src/content/posts/.*\.(md|mdx)$' 2>/dev/null \
     | while read -r f; do
         [ -f "$f" ] || continue
+        grep -qiE '^draft:[[:space:]]*true' "$f" && continue
         awk '/^title:/{sub(/^title:[[:space:]]*/, ""); gsub(/^["'"'"']|["'"'"']$/, ""); print; exit}' "$f"
       done \
     | head -3)
@@ -111,8 +137,23 @@ step "提交并推送"
 
 git add -A || die "暂存失败"
 
+# 把草稿从暂存区撤出，让它们只留在本地
+if [ "$DRAFT_COUNT" -gt 0 ]; then
+  printf '%s\n' "$DRAFTS" | while read -r f; do
+    [ -n "$f" ] || continue
+    git reset -q HEAD -- "$f" 2>/dev/null || true
+  done
+  ok "已排除 $DRAFT_COUNT 篇草稿（保留在本地）"
+fi
+
+if git diff --cached --quiet; then
+  warn "排除草稿后没有可提交的内容"
+  printf '\n%s\n\n' "  ${DIM}你的草稿还在本地。要发布它们，把 draft: true 改成 draft: false 再运行。${RESET}"
+  exit 0
+fi
+
 if ! git commit -q -m "$MSG"; then
-  die "提交失败（可能没有实际改动）"
+  die "提交失败"
 fi
 ok "已提交：$(git log --oneline -1 | cut -c1-60)"
 
