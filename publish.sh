@@ -13,6 +13,7 @@ set -uo pipefail
 
 PROJECT_DIR="/Users/w/Documents/code/2026/blog-easy"
 SITE_URL="https://w52mc.github.io/"
+AUTHOR="碳水化合物"
 DEPLOY_TIMEOUT=420   # 等待部署的最长秒数
 SKIP_WAIT="${SKIP_WAIT:-0}"
 NO_OPEN="${NO_OPEN:-0}"
@@ -63,6 +64,88 @@ CHANGED=$(git status --porcelain | wc -l | tr -d ' ')
 info "共 $CHANGED 个文件有改动："
 git status --short | head -15 | sed 's/^/    /'
 [ "$CHANGED" -gt 15 ] && info "    ${DIM}…还有 $((CHANGED - 15)) 个${RESET}"
+
+# ── 自动补全 frontmatter ──────────────────────────────────────────────
+# 你只写正文，标题/日期/作者等字段自动生成
+
+FILLED=$(git status --porcelain \
+  | awk '{print $NF}' \
+  | grep -E '^src/content/posts/.*\.(md|mdx)$' 2>/dev/null \
+  | while read -r f; do
+      [ -f "$f" ] || continue
+      python3 - "$f" "$AUTHOR" <<'PYEOF'
+import re, sys, datetime, pathlib
+
+path, author = sys.argv[1], sys.argv[2]
+p = pathlib.Path(path)
+raw = p.read_text(encoding="utf-8")
+
+# 从文件名生成标题：去掉扩展名，连字符/下划线转空格，英文单词首字母大写
+stem = re.sub(r"\.(md|mdx)$", "", p.name)
+title = re.sub(r"[-_]+", " ", stem).strip()
+if not re.search(r"[\u4e00-\u9fff]", title):
+    title = " ".join(w.capitalize() for w in title.split())
+
+now = datetime.datetime.now().astimezone()
+now_str = now.strftime("%Y-%m-%dT%H:%M:%S%z")
+now_str = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", now_str)
+
+defaults = {
+    "title": title,
+    "author": author,
+    "pubDatetime": now_str,
+    "draft": "false",
+    "tags": "[]",
+    "description": "",
+}
+
+changed = False
+
+if raw.startswith("---"):
+    # 已有 frontmatter：补齐缺失字段
+    end = raw.find("\n---", 3)
+    if end == -1:
+        sys.exit(0)
+    fm = raw[3:end]
+    had_keys = set(re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", fm, re.M))
+    missing = {k: v for k, v in defaults.items() if k not in had_keys}
+    if missing:
+        extra = "".join(f"\n{k}: {v if v else '\"\"'}" for k, v in missing.items())
+        raw = raw[:end] + extra + raw[end:]
+        changed = True
+else:
+    # 完全没有 frontmatter：补一整块
+    body = raw.lstrip("\n")
+    fm_block = (
+        "---\n"
+        f"title: {defaults['title']}\n"
+        f"author: {defaults['author']}\n"
+        f"pubDatetime: {defaults['pubDatetime']}\n"
+        f"draft: {defaults['draft']}\n"
+        f"tags: {defaults['tags']}\n"
+        'description: ""\n'
+        "---\n\n"
+    )
+    raw = fm_block + body
+    changed = True
+
+if changed:
+    p.write_text(raw, encoding="utf-8")
+    print(path)
+PYEOF
+    done) || true
+
+if [ -n "${FILLED:-}" ]; then
+  FILLED_COUNT=$(printf '%s\n' "$FILLED" | grep -c . || true)
+  printf '\n'
+  ok "自动补全了 $FILLED_COUNT 篇文章的信息："
+  printf '%s\n' "$FILLED" | while read -r f; do
+    [ -n "$f" ] || continue
+    t=$(awk '/^title:/{sub(/^title:[[:space:]]*/, ""); gsub(/^["'"'"']|["'"'"']$/, ""); print; exit}' "$f")
+    info "    ${DIM}·${RESET} ${t:-$(basename "$f")}"
+  done
+  info "  ${DIM}标题取自文件名，日期取当前时间。想改就直接编辑文件。${RESET}"
+fi
 
 # 草稿文件：draft: true —— 只在本地保留，绝不提交
 DRAFTS=$(git status --porcelain \
