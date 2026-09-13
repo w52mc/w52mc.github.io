@@ -3,7 +3,7 @@ title: Anaconda 速通
 author: 碳水化合物
 pubDatetime: 2026-09-14T00:31:15+08:00
 draft: false
-tags: []
+tags: [anaconda]
 description: ""
 ---
 
@@ -21,8 +21,6 @@ description: ""
 - **conda**：包管理和环境管理工具，Anaconda 里包含它。
 - **Miniconda**：精简版，只含 `conda` + Python，其他包自己装。
 - **Miniforge**：类似 Miniconda，但默认使用社区频道 `conda-forge`。
-
-
 
 ## 包含什么
 
@@ -43,8 +41,6 @@ description: ""
 
 它支持 Windows、macOS、Linux。
 
-
-
 ## 优点
 
 1. **开箱即用**
@@ -58,8 +54,6 @@ description: ""
    conda activate myenv
    ```
 
-   
-
 3. **跨平台、支持非 Python 依赖**
    conda 不仅能装 Python 包，还能装 C/C++ 库、CUDA、R 包等，对科学计算和深度学习比较友好。
 
@@ -68,7 +62,6 @@ description: ""
 
 5. **适合数据科学、科研、机器学习**
    很多课程、论文复现、Kaggle 项目都直接用 Anaconda 环境。
-
 
 ## 缺点
 
@@ -137,8 +130,6 @@ conda info
 ```bash
 conda env list
 ```
-
-
 
 ## 环境操作
 
@@ -286,8 +277,6 @@ conda search 包名
 conda search "django>=4.2"
 ```
 
-
-
 ### 安装包
 
 通过下面的命令安装包：
@@ -298,7 +287,7 @@ conda install requests # requests 是包的名字
 
 也可以一次性安装多个包：
 
-```bash 
+```bash
 conda install numpy pandas matplotlib
 ```
 
