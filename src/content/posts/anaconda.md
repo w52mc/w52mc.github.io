@@ -4,7 +4,7 @@ author: 碳水化合物
 pubDatetime: 2026-09-14T00:31:15+08:00
 draft: false
 tags: [anaconda]
-description: "10分钟快速了解Anaconda常用命令"
+description: "5分钟快速掌握Anaconda的使用。"
 ---
 
 # Anaconda 速通
