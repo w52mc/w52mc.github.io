@@ -17,6 +17,7 @@ import {
   transformerNotationWordHighlight,
 } from "@shikijs/transformers";
 import { transformerFileName } from "./src/utils/transformers/fileName";
+import { rehypeStripH1 } from "./src/utils/transformers/rehypeStripH1";
 import config from "./astro-paper.config";
 
 export default defineConfig({
@@ -43,7 +44,7 @@ export default defineConfig({
         remarkToc,
         [remarkCollapse, { test: "Table of contents" }],
       ],
-      rehypePlugins: [rehypeCallouts],
+      rehypePlugins: [rehypeStripH1, rehypeCallouts],
     }),
     shikiConfig: {
       themes: { light: "min-light", dark: "night-owl" },
