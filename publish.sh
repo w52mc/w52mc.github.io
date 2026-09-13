@@ -326,7 +326,13 @@ if [ "$SKIP_TAGS" = "0" ]; then
   if [ -n "${TAG_FILES:-}" ]; then
     printf '\n'
     info "${BOLD}标签${RESET}"
-    python3 src/utils/tag_prompt.py $TAG_FILES
+    if [ -r /dev/tty ]; then
+      # 把 stdin 直接接到终端，键盘输入不受调用方式影响
+      python3 src/utils/tag_prompt.py $TAG_FILES < /dev/tty
+    else
+      warn "当前会话读不到终端（/dev/tty），跳过标签输入"
+      info "  ${DIM}可手动编辑文章 frontmatter 的 tags 字段${RESET}"
+    fi
   fi
 fi
 

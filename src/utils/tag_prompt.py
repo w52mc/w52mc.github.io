@@ -10,7 +10,8 @@
 - 直接回车 = 跳过这篇（保持原样，不写 tags 字段）
 - 输入 others = 用系统默认标签
 
-交互走 /dev/tty，所以无论这个脚本的 stdin 被重定向成什么都能正常读键盘。
+输入从 stdin 读（shell 里用 < /dev/tty 把它接到终端），
+提示写到 stderr —— 不依赖打开 /dev/tty 设备。
 """
 import re
 import sys
@@ -75,13 +76,31 @@ def write_tags(path, tags):
     return text[:end] + "\ntags: " + value + text[end:]
 
 
-def ask(prompt, tty):
-    """在终端上问一句。拿不到终端（非交互环境）就返回 None，表示跳过。"""
-    if tty is None:
-        return None
-    tty.write(prompt)
-    tty.flush()
-    line = tty.readline()
+def pick_io():
+    """决定从哪里读输入、往哪里写提示。
+
+    优先 stdin（shell 里通常已经 < /dev/tty 接好了）。只有 stdin 彻底读不到
+    才返回 None（此时上层会跳过标签输入）。
+    """
+    stdin = sys.stdin
+    if not stdin.isatty():
+        try:
+            stdin = open("/dev/tty", "r")
+        except OSError:
+            stdin = sys.stdin          # /dev/tty 打不开就退回 stdin，别放弃
+
+    if stdin is None or not getattr(stdin, "readable", lambda: False)():
+        stdin = None
+
+    out = sys.stderr if sys.stderr.isatty() else sys.stdout
+    return stdin, out
+
+
+def ask(prompt, fh, out):
+    """问一句并读一行。读不到输入就返回 None，表示跳过。"""
+    out.write(prompt)
+    out.flush()
+    line = fh.readline()
     return line.rstrip("\n") if line else ""
 
 
@@ -90,13 +109,9 @@ def main(argv):
     if not paths:
         return 0
 
-    try:
-        tty = open("/dev/tty", "r+")
-    except OSError:
-        tty = None
-
-    if tty is None:
-        print("  ! 没有可用终端，跳过标签输入")
+    stdin, out = pick_io()
+    if stdin is None:
+        out.write("  ! 读不到终端输入，跳过标签（可手动编辑 frontmatter 的 tags）\n")
         return 0
 
     targets = []
@@ -111,13 +126,12 @@ def main(argv):
             targets.append((path, title))
 
     if not targets:
-        print("  没有需要填标签的文章")
         return 0
 
-    print("  \033[2m标签：逗号分隔；直接回车跳过；输入 others 用系统默认标签\033[0m")
+    out.write("  \033[2m标签：逗号分隔；直接回车跳过；输入 others 用系统默认标签\033[0m\n")
     saved = 0
     for path, title in targets:
-        answer = ask("\n  %s\n  标签: " % title, tty)
+        answer = ask("\n  %s\n  标签: " % title, stdin, out)
         if answer is None:
             continue
         tags = parse_input(answer)
@@ -125,11 +139,11 @@ def main(argv):
             continue
         with open(path, "w", encoding="utf-8") as f:
             f.write(write_tags(path, tags))
-        print("    ✓ " + ", ".join(tags))
+        out.write("    ✓ " + ", ".join(tags) + "\n")
         saved += 1
 
     if saved:
-        print("  \033[2m已写入 %d 篇文章；想改就直接编辑文件\033[0m" % saved)
+        out.write("  \033[2m已写入 %d 篇文章；想改就直接编辑文件\033[0m\n" % saved)
     return 0
 
 
