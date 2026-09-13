@@ -13,6 +13,7 @@
 输入从 stdin 读（shell 里用 < /dev/tty 把它接到终端），
 提示写到 stderr —— 不依赖打开 /dev/tty 设备。
 """
+import os
 import re
 import sys
 
@@ -137,8 +138,23 @@ def main(argv):
         tags = parse_input(answer)
         if not tags:
             continue
+        # 先把新内容算出来，再打开文件写入。
+        # 不能写成 f.write(write_tags(path, tags))：open(path, "w") 会先把文件截断，
+        # 那样 write_tags 读到的是空文件，正文会被整段丢掉。
+        result = write_tags(path, tags)
+
+        # 保险：写入前对比大小。正常只是改一行 tags，不可能让文件缩水一大截；
+        # 真出现了就说明读到的内容不完整，宁可不动这个文件。
+        try:
+            old_size = os.path.getsize(path)
+        except OSError:
+            old_size = 0
+        if old_size and len(result.encode("utf-8")) < old_size * 0.5:
+            out.write("    ! 跳过 %s：写入前检查发现内容会异常变短，已保持原文件不动\n" % path)
+            continue
+
         with open(path, "w", encoding="utf-8") as f:
-            f.write(write_tags(path, tags))
+            f.write(result)
         out.write("    ✓ " + ", ".join(tags) + "\n")
         saved += 1
 
