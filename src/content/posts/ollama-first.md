@@ -1,3 +1,12 @@
+---
+title: "ollama 浅度体验"
+author: "碳水化合物"
+pubDatetime: 2026-09-13T21:54:00+08:00
+draft: false
+tags: ["ollama"]
+description: "Ollama 本地大模型运行平台的浅度体验：介绍、特点、架构与使用方式。"
+---
+
 # ollama 浅度体验
 
 
