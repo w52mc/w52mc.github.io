@@ -218,7 +218,8 @@ defaults = {
     "author": author,
     "pubDatetime": now_str,
     "draft": "false",
-    "tags": "[]",
+    # 不写 tags：交给 schema 的默认值 ["others"]（src/content.config.ts:18）
+    # 写 tags: [] 反而会让文章一个标签都没有
     "description": "",
 }
 
@@ -256,7 +257,6 @@ else:
         f"author: {defaults['author']}\n"
         f"pubDatetime: {defaults['pubDatetime']}\n"
         f"draft: {defaults['draft']}\n"
-        f"tags: {defaults['tags']}\n"
         'description: ""\n'
         "---\n\n"
     )
@@ -304,6 +304,30 @@ if [ "$DRAFT_COUNT" -gt 0 ]; then
     info "    ${DIM}·${RESET} ${t:-$(basename "$f")}"
   done
   info "  ${DIM}要发布草稿：把文件里的 draft: true 改成 draft: false${RESET}"
+fi
+
+SKIP_TAGS=0
+if [ "${1:-}" = "-t" ] || [ "${1:-}" = "--no-tags" ]; then
+  SKIP_TAGS=1
+  [ $# -ge 1 ] && shift
+fi
+
+# 给还没有标签的文章问一次标签（有标签的不动；草稿不问）
+if [ "$SKIP_TAGS" = "0" ]; then
+  TAG_FILES=$(git status --porcelain \
+    | awk '{print $NF}' \
+    | grep -E '^src/content/posts/.*\.(md|mdx)$' 2>/dev/null \
+    | while read -r f; do
+        [ -f "$f" ] || continue
+        grep -qiE '^draft:[[:space:]]*true' "$f" && continue
+        printf '%s\n' "$f"
+      done) || true
+
+  if [ -n "${TAG_FILES:-}" ]; then
+    printf '\n'
+    info "${BOLD}标签${RESET}"
+    python3 src/utils/tag_prompt.py $TAG_FILES
+  fi
 fi
 
 # ── 3. 生成提交信息 ───────────────────────────────────────────────────

@@ -31,3 +31,7 @@ public/pagefind
 
 # docker compose
 compose.override.yaml
+
+# python 缓存（publish 时会调用 tag_prompt.py）
+__pycache__/
+*.pyc
