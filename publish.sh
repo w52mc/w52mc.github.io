@@ -34,6 +34,57 @@ fail()  { printf '%s\n' "  ${RED}✗${RESET} $*"; }
 step()  { printf '\n%s\n' "${BOLD}${BLUE}▸ $*${RESET}"; }
 die()   { fail "$*"; exit 1; }
 
+# ── 部署查询（检查改动、等待部署都要用）───────────────────────────────
+
+RUN_REPO="w52mc/w52mc.github.io"
+
+# 找某个 commit 对应的 workflow run，成功则打印 run id
+find_run_id() {
+  local sha="$1" rid=""
+  for _ in $(seq 1 12); do
+    rid=$(gh run list --repo "$RUN_REPO" --limit 8 \
+      --json databaseId,headSha,status,createdAt \
+      --jq "[.[] | select(.headSha == \"$sha\")] | .[0].databaseId" 2>/dev/null)
+    if [ -n "$rid" ] && [ "$rid" != "null" ]; then printf '%s' "$rid"; return 0; fi
+    sleep 5
+  done
+  return 1
+}
+
+# 查询 run 状态，输出 "status|conclusion"
+run_state() {
+  gh api "repos/$RUN_REPO/actions/runs/$1" \
+    --jq '.status + "|" + (.conclusion // "")' 2>/dev/null
+}
+
+# 等待 run 结束：部署成功返回 0，失败返回 1
+wait_deploy() {
+  local run_id="$1" elapsed=0 status="" conclusion="" state=""
+  while [ "$elapsed" -lt "$DEPLOY_TIMEOUT" ]; do
+    state=$(run_state "$run_id")
+    status="${state%%|*}"
+    conclusion="${state##*|}"
+    [ "$status" = "completed" ] && break
+    printf '\r    %s 已等待 %ss…' "$(printf '%s' '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' | cut -c$(( (elapsed / 2) % 10 + 1 )))" "$elapsed"
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  printf '\r\033[K'
+
+  if [ "$status" = "completed" ] && [ "$conclusion" = "success" ]; then
+    ok "部署完成（用时约 ${elapsed}s）"
+    return 0
+  elif [ "$status" = "completed" ]; then
+    fail "部署失败：$conclusion"
+    info "日志：https://github.com/$RUN_REPO/actions/runs/$run_id"
+    return 1
+  else
+    warn "等待超时（${DEPLOY_TIMEOUT}s），部署可能仍在进行"
+    info "进度：https://github.com/$RUN_REPO/actions"
+    return 0
+  fi
+}
+
 printf '\n%s\n' "${BOLD}📝 博客发布${RESET}"
 
 # ── 1. 进入项目 ───────────────────────────────────────────────────────
@@ -54,16 +105,62 @@ ok "项目：$(basename "$PROJECT_DIR")　分支：$BRANCH"
 
 step "检查改动"
 
-if [ -z "$(git status --porcelain)" ]; then
-  warn "没有任何改动，无需发布"
+# 上次 push 失败会把提交留在本地：工作区是干净的，但它们还没上去
+UNPUSHED=$(git rev-list --count HEAD --not --remotes 2>/dev/null || echo 0)
+[ -n "$UNPUSHED" ] || UNPUSHED=0
+
+if [ -z "$(git status --porcelain)" ] && [ "$UNPUSHED" -eq 0 ]; then
+  # 没有新内容。如果上次是部署失败，允许直接重跑，不用再提交一次。
+  if command -v gh >/dev/null 2>&1; then
+    LAST=$(gh run list --repo "$RUN_REPO" --limit 8 \
+      --json databaseId,headSha,status,conclusion \
+      --jq "[.[] | select(.headSha == \"$(git rev-parse HEAD)\")] | .[0] // empty | \"\(.databaseId)|\(.status)|\(.conclusion // \"\")\"" 2>/dev/null)
+    if [ -n "$LAST" ]; then
+      LAST_ID="${LAST%%|*}"
+      REST="${LAST#*|}"
+      LAST_STATUS="${REST%%|*}"
+      LAST_CONCL="${REST##*|}"
+      if [ "$LAST_STATUS" = "completed" ] && [ "$LAST_CONCL" = "failure" ]; then
+        printf '\n'
+        warn "没有新改动，但上次部署失败了，正在重新部署…"
+        step "重跑部署"
+        if gh run rerun "$LAST_ID" --repo "$RUN_REPO" >/dev/null 2>&1; then
+          ok "已重新触发（run $LAST_ID）"
+          wait_deploy "$LAST_ID" || exit 1
+          printf '\n%s\n\n' "  ${BOLD}${GREEN}🎉 部署完成${RESET}"
+          exit 0
+        fi
+        fail "重新触发失败，请手动打开："
+        info "https://github.com/$RUN_REPO/actions/runs/$LAST_ID"
+        exit 1
+      elif [ "$LAST_STATUS" != "completed" ]; then
+        warn "没有新改动，上次的部署还在进行中"
+        info "https://github.com/$RUN_REPO/actions/runs/$LAST_ID"
+        exit 0
+      else
+        ok "没有新改动，当前版本已部署成功"
+        info "线上地址：${SITE_URL}"
+        printf '\n%s\n\n' "${DIM}若显示旧内容，按 Cmd+Shift+R 强制刷新${RESET}"
+        exit 0
+      fi
+    fi
+  fi
+  warn "没有任何改动，也没有待推送的提交，无需发布"
   printf '\n%s\n\n' "${DIM}提示：文章写完保存后，再运行这个脚本。${RESET}"
   exit 0
 fi
 
+if [ "$UNPUSHED" -gt 0 ]; then
+  printf '\n'
+  ok "发现 $UNPUSHED 个还没推送成功的提交，这次会一起推上去"
+fi
+
 CHANGED=$(git status --porcelain | wc -l | tr -d ' ')
-info "共 $CHANGED 个文件有改动："
-git status --short | head -15 | sed 's/^/    /'
-[ "$CHANGED" -gt 15 ] && info "    ${DIM}…还有 $((CHANGED - 15)) 个${RESET}"
+if [ "$CHANGED" -gt 0 ]; then
+  info "共 $CHANGED 个文件有改动："
+  git status --short | head -15 | sed 's/^/    /'
+  [ "$CHANGED" -gt 15 ] && info "    ${DIM}…还有 $((CHANGED - 15)) 个${RESET}"
+fi
 
 # ── 自动补全 frontmatter ──────────────────────────────────────────────
 # 你只写正文，标题/日期/作者等字段自动生成
@@ -239,26 +336,46 @@ if [ "$DRAFT_COUNT" -gt 0 ]; then
 fi
 
 if git diff --cached --quiet; then
-  warn "排除草稿后没有可提交的内容"
-  printf '\n%s\n\n' "  ${DIM}你的草稿还在本地。要发布它们，把 draft: true 改成 draft: false 再运行。${RESET}"
-  exit 0
+  if [ "$UNPUSHED" -gt 0 ]; then
+    ok "没有新的改动，跳过提交，直接补推那 $UNPUSHED 个提交"
+  else
+    warn "排除草稿后没有可提交的内容"
+    printf '\n%s\n\n' "  ${DIM}你的草稿还在本地。要发布它们，把 draft: true 改成 draft: false 再运行。${RESET}"
+    exit 0
+  fi
+else
+  if ! git commit -q -m "$MSG"; then
+    die "提交失败（改动还在工作区，处理完再运行本脚本即可）"
+  fi
+  ok "已提交：$(git log --oneline -1 | cut -c1-60)"
 fi
-
-if ! git commit -q -m "$MSG"; then
-  die "提交失败"
-fi
-ok "已提交：$(git log --oneline -1 | cut -c1-60)"
 
 printf '  %s' "推送到 GitHub…"
-if ! git push 2>/tmp/blog_push_err.log; then
+PUSHED=0
+if git push 2>/tmp/blog_push_err.log; then
+  PUSHED=1
+elif grep -qiE "non-fast-forward|fetch first|\[rejected\]" /tmp/blog_push_err.log; then
+  # 远端有新提交（例如在网页上改过），先同步再推一次
   printf '\r\033[K'
+  warn "远端有新的提交，正在自动同步后重试…"
+  if git pull --rebase --autostash -q && git push 2>/tmp/blog_push_err.log; then
+    PUSHED=1
+    info "已自动合并远端改动"
+  fi
+fi
+
+printf '\r\033[K'
+if [ "$PUSHED" = "1" ]; then
+  ok "推送成功"
+else
   fail "推送失败"
   sed 's/^/    /' /tmp/blog_push_err.log | head -8
-  printf '\n%s\n' "${DIM}提示：如果是权限问题，运行 gh auth refresh -s workflow 后重试${RESET}"
+  printf '\n'
+  warn "提交已经存在本地了，不会丢"
+  info "网络或权限恢复后，${BOLD}再运行一次本脚本${RESET}就会继续把它推上去"
+  info "如果是权限问题：${BOLD}gh auth refresh -s workflow${RESET}"
   exit 1
 fi
-printf '\r\033[K'
-ok "推送成功"
 
 # ── 5. 等待部署 ───────────────────────────────────────────────────────
 
@@ -268,46 +385,14 @@ if [ "$SKIP_WAIT" = "1" ]; then
   warn "已跳过等待（SKIP_WAIT=1）"
 elif ! command -v gh >/dev/null 2>&1; then
   warn "未安装 gh，无法查询部署进度"
-  info "可在这里手动查看：https://github.com/w52mc/w52mc.github.io/actions"
+  info "可在这里手动查看：https://github.com/$RUN_REPO/actions"
 else
-  RUN_ID=""
   info "查找部署任务…"
-  for _ in $(seq 1 12); do
-    RUN_ID=$(gh run list --repo w52mc/w52mc.github.io --limit 8 \
-      --json databaseId,headSha,status,createdAt \
-      --jq "[.[] | select(.headSha == \"$(git rev-parse HEAD)\")] | .[0].databaseId" 2>/dev/null)
-    [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] && break
-    sleep 5
-  done
-
-  if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+  if ! RUN_ID=$(find_run_id "$(git rev-parse HEAD)"); then
     warn "没找到对应的部署任务，可能还在排队"
-    info "进度：https://github.com/w52mc/w52mc.github.io/actions"
+    info "进度：https://github.com/$RUN_REPO/actions"
   else
-    ELAPSED=0
-    STATUS=""
-    while [ "$ELAPSED" -lt "$DEPLOY_TIMEOUT" ]; do
-      RESULT=$(gh api "repos/w52mc/w52mc.github.io/actions/runs/$RUN_ID" \
-        --jq '.status + "|" + (.conclusion // "")' 2>/dev/null)
-      STATUS="${RESULT%%|*}"
-      CONCLUSION="${RESULT##*|}"
-      if [ "$STATUS" = "completed" ]; then break; fi
-      printf '\r    %s 已等待 %ss…' "$(printf '%s' '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' | cut -c$(( (ELAPSED / 2) % 10 + 1 )))" "$ELAPSED"
-      sleep 5
-      ELAPSED=$((ELAPSED + 5))
-    done
-    printf '\r\033[K'
-
-    if [ "$STATUS" = "completed" ] && [ "$CONCLUSION" = "success" ]; then
-      ok "部署完成（用时约 ${ELAPSED}s）"
-    elif [ "$STATUS" = "completed" ]; then
-      fail "部署失败：$CONCLUSION"
-      info "日志：https://github.com/w52mc/w52mc.github.io/actions/runs/$RUN_ID"
-      exit 1
-    else
-      warn "等待超时（${DEPLOY_TIMEOUT}s），部署可能仍在进行"
-      info "进度：https://github.com/w52mc/w52mc.github.io/actions"
-    fi
+    wait_deploy "$RUN_ID" || exit 1
   fi
 fi
 
