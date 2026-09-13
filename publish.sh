@@ -312,7 +312,7 @@ if [ "${1:-}" = "-t" ] || [ "${1:-}" = "--no-tags" ]; then
   [ $# -ge 1 ] && shift
 fi
 
-# 给还没有标签的文章问一次标签（有标签的不动；草稿不问）
+# 给文章问标签和简介（已有标签/简介的不问；草稿不问）
 if [ "$SKIP_TAGS" = "0" ]; then
   TAG_FILES=$(git status --porcelain \
     | awk '{print $NF}' \
@@ -325,13 +325,13 @@ if [ "$SKIP_TAGS" = "0" ]; then
 
   if [ -n "${TAG_FILES:-}" ]; then
     printf '\n'
-    info "${BOLD}标签${RESET}"
+    info "${BOLD}标签与简介${RESET}"
     if [ -r /dev/tty ]; then
       # 把 stdin 直接接到终端，键盘输入不受调用方式影响
       python3 src/utils/tag_prompt.py $TAG_FILES < /dev/tty
     else
-      warn "当前会话读不到终端（/dev/tty），跳过标签输入"
-      info "  ${DIM}可手动编辑文章 frontmatter 的 tags 字段${RESET}"
+      warn "当前会话读不到终端（/dev/tty），跳过输入"
+      info "  ${DIM}可手动编辑文章 frontmatter 的 tags / description${RESET}"
     fi
   fi
 fi

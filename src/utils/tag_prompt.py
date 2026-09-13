@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""publish 时的标签输入。
+"""publish 时问标签和简介。
 
 用法：tag_prompt.py <文章.md> [更多文章...]
 
-对每篇"还没有标签"的文章，在终端上问一次标签，写回 frontmatter 的 tags 字段。
-已经有标签的文章直接跳过，不动它。
-
-- 输入用逗号分隔，例如：python, 爬虫
-- 直接回车 = 跳过这篇（保持原样，不写 tags 字段）
-- 输入 others = 用系统默认标签
+对每篇文章依次问两件事，答案写回 frontmatter：
+1. tags —— 没有标签的文章才问；直接回车或输入无效 → 用 others
+2. description —— 没有简介的文章才问；直接回车或输入无效 → 留空
 
 输入从 stdin 读（shell 里用 < /dev/tty 把它接到终端），
 提示写到 stderr —— 不依赖打开 /dev/tty 设备。
@@ -18,6 +15,7 @@ import re
 import sys
 
 EMPTY_ARRAY = re.compile(r'^\[[ \t]*("")?[ \t]*(,[ \t]*"")*[ \t]*\]$')
+DEFAULT_TAG = "others"
 
 
 def split_frontmatter(text):
@@ -31,15 +29,25 @@ def split_frontmatter(text):
 
 
 def read_info(path):
-    """读标题、现有 tags、是否草稿。"""
+    """读标题、现有 tags、现有 description、是否草稿。"""
     raw = open(path, encoding="utf-8").read()
     fm, _ = split_frontmatter(raw)
-    m = re.search(r"^title:[ \t]*(.*)$", fm, re.M)
-    title = m.group(1).strip().strip("\"'") if m else ""
-    t = re.search(r"^tags:[ \t]*(.*)$", fm, re.M)
-    tags = t.group(1).strip() if t else ""
+
+    def field(name):
+        m = re.search(r"^%s:[ \t]*(.*)$" % name, fm, re.M)
+        return m.group(1).strip() if m else ""
+
+    title = field("title").strip("\"'")
+    tags = field("tags")
+    description = field("description")
     draft = bool(re.search(r"^draft:[ \t]*true[ \t]*$", fm, re.M | re.I))
-    return raw, title or path, tags, draft
+    return raw, title or path, tags, description, draft
+
+
+def has_description(description):
+    """description: "" 这种空壳算没有简介。"""
+    return bool(re.sub(r'["\' \t]', "", description))
+
 
 
 def has_tags(tags):
@@ -62,19 +70,36 @@ def parse_input(raw):
     return out
 
 
-def write_tags(path, tags):
-    """把 tags 写进 frontmatter。"""
-    value = "[" + ", ".join('"%s"' % t for t in tags) + "]"
+def write_field(path, name, value_repr):
+    """把 frontmatter 里的某个字段写成 value_repr（已是 YAML 值形式）。"""
     text = open(path, encoding="utf-8").read()
     fm, end = split_frontmatter(text)
 
     if end == -1:
-        return "---\ntags: " + value + "\n---\n\n" + text
+        return "---\n%s: %s\n---\n\n" % (name, value_repr) + text
 
-    m = re.search(r"^tags:[ \t]*(.*)$", fm, re.M)
+    m = re.search(r"^%s:[ \t]*(.*)$" % name, fm, re.M)
     if m:
-        return text[: 3 + m.start(1)] + value + text[3 + m.end(1):]
-    return text[:end] + "\ntags: " + value + text[end:]
+        return text[: 3 + m.start(1)] + value_repr + text[3 + m.end(1):]
+    return text[:end] + "\n%s: %s" % (name, value_repr) + text[end:]
+
+
+def yaml_string(s):
+    """YAML 双引号字符串。"""
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def write_tags(path, tags):
+    """把 tags 写进 frontmatter。"""
+    return write_field(path, "tags", "[" + ", ".join(yaml_string(t) for t in tags) + "]")
+
+
+def clean_description(raw):
+    """清理简介文本；空或只剩引号/空白 → 返回空字符串。"""
+    s = re.sub(r"[\r\n]+", " ", raw)
+    s = re.sub(r'^[\s"\'“”‘’]+|[\s"\'“”‘’]+$', "", s)
+    return s.strip()
+
 
 
 def pick_io():
@@ -105,6 +130,20 @@ def ask(prompt, fh, out):
     return line.rstrip("\n") if line else ""
 
 
+def safe_write(path, result, out):
+    """写入前做一次缩水检查，防止读到的内容不完整时把正文写没。"""
+    try:
+        old_size = os.path.getsize(path)
+    except OSError:
+        old_size = 0
+    if old_size and len(result.encode("utf-8")) < old_size * 0.5:
+        out.write("    ! 跳过 %s：写入前检查发现内容会异常变短，已保持原文件不动\n" % path)
+        return False
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(result)
+    return True
+
+
 def main(argv):
     paths = argv[1:]
     if not paths:
@@ -112,54 +151,58 @@ def main(argv):
 
     stdin, out = pick_io()
     if stdin is None:
-        out.write("  ! 读不到终端输入，跳过标签（可手动编辑 frontmatter 的 tags）\n")
+        out.write("  ! 读不到终端输入，跳过标签与简介（可手动编辑 frontmatter）\n")
         return 0
 
     targets = []
     for path in paths:
         try:
-            raw, title, tags, draft = read_info(path)
+            raw, title, tags, description, draft = read_info(path)
         except OSError:
             continue
         if draft:                       # 草稿不打扰
             continue
-        if not has_tags(tags):
-            targets.append((path, title))
+        targets.append((path, title, tags, description))
 
     if not targets:
         return 0
 
-    out.write("  \033[2m标签：逗号分隔；直接回车跳过；输入 others 用系统默认标签\033[0m\n")
+    out.write("  \033[2m标签：逗号分隔，空着回车 = 用 others\033[0m\n")
+    out.write("  \033[2m简介：一句话摘要，空着回车 = 留空\033[0m\n")
+
     saved = 0
-    for path, title in targets:
-        answer = ask("\n  %s\n  标签: " % title, stdin, out)
-        if answer is None:
-            continue
-        tags = parse_input(answer)
-        if not tags:
-            continue
-        # 先把新内容算出来，再打开文件写入。
-        # 不能写成 f.write(write_tags(path, tags))：open(path, "w") 会先把文件截断，
-        # 那样 write_tags 读到的是空文件，正文会被整段丢掉。
-        result = write_tags(path, tags)
+    for path, title, tags, description in targets:
+        out.write("\n  %s\n" % title)
+        changed = False
 
-        # 保险：写入前对比大小。正常只是改一行 tags，不可能让文件缩水一大截；
-        # 真出现了就说明读到的内容不完整，宁可不动这个文件。
-        try:
-            old_size = os.path.getsize(path)
-        except OSError:
-            old_size = 0
-        if old_size and len(result.encode("utf-8")) < old_size * 0.5:
-            out.write("    ! 跳过 %s：写入前检查发现内容会异常变短，已保持原文件不动\n" % path)
-            continue
+        # ── 1. 标签 ────────────────────────────────────────────────
+        if not has_tags(tags):
+            answer = ask("  标签: ", stdin, out)
+            if answer is None:
+                continue
+            tags = parse_input(answer) or [DEFAULT_TAG]
+            # 先把新内容算出来，再打开文件写入。
+            # 不能写成 f.write(write_tags(...))：open(path, "w") 会先把文件截断，
+            # 那样写函数读到的是空文件，正文会被整段丢掉。
+            if safe_write(path, write_tags(path, tags), out):
+                out.write("    ✓ tags: " + ", ".join(tags) + "\n")
+                changed = True
 
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(result)
-        out.write("    ✓ " + ", ".join(tags) + "\n")
-        saved += 1
+        # ── 2. 简介 ────────────────────────────────────────────────
+        if not has_description(description):
+            answer = ask("  简介: ", stdin, out)
+            if answer is None:
+                continue
+            desc = clean_description(answer)
+            if safe_write(path, write_field(path, "description", yaml_string(desc)), out):
+                out.write("    ✓ description: %s\n" % (desc if desc else "(空)"))
+                changed = True
+
+        if changed:
+            saved += 1
 
     if saved:
-        out.write("  \033[2m已写入 %d 篇文章；想改就直接编辑文件\033[0m\n" % saved)
+        out.write("  \033[2m已更新 %d 篇文章；想改就直接编辑文件\033[0m\n" % saved)
     return 0
 
 
