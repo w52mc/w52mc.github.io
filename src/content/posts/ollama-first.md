@@ -7,10 +7,6 @@ tags: ["ollama"]
 description: "Ollama 本地大模型运行平台的浅度体验：介绍、特点、架构与使用方式。"
 ---
 
-# ollama 浅度体验
-
-
-
 ## 介绍
 
 Ollama 是一个开源的本地大语言模型（LLM）运行平台，由 Jeffrey Morgan 和 Michael Chiang 于 2023 年创建。它的核心目标是 **简化大模型在个人电脑上的部署和使用**，让开发者、研究人员和爱好者无需依赖云端服务，就能在本地运行 Llama、Qwen、DeepSeek 等主流开源模型。
