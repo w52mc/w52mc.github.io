@@ -177,11 +177,37 @@ path, author = sys.argv[1], sys.argv[2]
 p = pathlib.Path(path)
 raw = p.read_text(encoding="utf-8")
 
-# 从文件名生成标题：去掉扩展名，连字符/下划线转空格，英文单词首字母大写
+# 标题优先取正文里的一级标题（`# 标题`）；没有才用文件名兜底
+# 文件名：去掉扩展名，连字符/下划线转空格，英文单词首字母大写
 stem = re.sub(r"\.(md|mdx)$", "", p.name)
 title = re.sub(r"[-_]+", " ", stem).strip()
 if not re.search(r"[\u4e00-\u9fff]", title):
     title = " ".join(w.capitalize() for w in title.split())
+
+# 跳过 frontmatter 和围栏代码块，找第一个 `# 标题`
+def heading_title(text):
+    in_fm = text.startswith("---")
+    fence = None
+    for line in text.splitlines():
+        s = line.strip()
+        if in_fm:
+            if s == "---":
+                in_fm = False
+            continue
+        if fence:
+            if s.startswith(fence):
+                fence = None
+            continue
+        if s.startswith("```") or s.startswith("~~~"):
+            fence = s[:3]
+            continue
+        if re.match(r"^#\s+\S", s):
+            return s.lstrip("#").strip()
+    return ""
+
+body_title = heading_title(raw)
+if body_title:
+    title = body_title
 
 now = datetime.datetime.now().astimezone()
 now_str = now.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -210,6 +236,17 @@ if raw.startswith("---"):
         extra = "".join(f"\n{k}: {v if v else '\"\"'}" for k, v in missing.items())
         raw = raw[:end] + extra + raw[end:]
         changed = True
+
+    # 已经有 title 时，让 frontmatter 跟正文一级标题保持一致
+    if body_title:
+        m = re.search(r"^title:[ \t]*(.*)$", fm, re.M)
+        current = (m.group(1).strip() if m else "").strip("\"'").strip()
+        if m and current != body_title:
+            # fm 是 raw[3:end]，行内偏移要补上前面 3 个字符的 `---`
+            start = 3 + m.start(1)
+            end_at = 3 + m.end(1)
+            raw = raw[:start] + body_title + raw[end_at:]
+            changed = True
 else:
     # 完全没有 frontmatter：补一整块
     body = raw.lstrip("\n")

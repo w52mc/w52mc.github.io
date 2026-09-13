@@ -1,5 +1,5 @@
 ---
-title: Anaconda
+title: Anaconda 速通
 author: 碳水化合物
 pubDatetime: 2026-09-14T00:31:15+08:00
 draft: false
@@ -250,7 +250,7 @@ conda env create -f environment.yml
 
 #### 容易出错的地方
 
-`conda env export` 导出的清单里，库的版本号后面会带一串**构建编号**（build string），这些编号和**操作系统****、芯片架构**有关。比如你在 Mac 苹果芯片上导出的清单，拿到 Windows 上 `conda env create`，可能报错说"找不到这个版本的包"--因为那个构建编号是苹果芯片专用的，Windows 上没有。
+`conda env export` 导出的清单里，库的版本号后面会带一串**构建编号**（build string），这些编号和**操作系统**、**芯片架构**有关。比如你在 Mac 苹果芯片上导出的清单，拿到 Windows 上 `conda env create`，可能报错说"找不到这个版本的包"--因为那个构建编号是苹果芯片专用的，Windows 上没有。
 
 解决办法：导出时加 `--no-builds`，让 conda 只记版本号、不记构建编号：
 
