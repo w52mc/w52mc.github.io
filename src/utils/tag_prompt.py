@@ -29,14 +29,15 @@ def split_frontmatter(text):
 
 
 def read_info(path):
-    """读标题和现有 tags。"""
+    """读标题、现有 tags、是否草稿。"""
     raw = open(path, encoding="utf-8").read()
     fm, _ = split_frontmatter(raw)
     m = re.search(r"^title:[ \t]*(.*)$", fm, re.M)
     title = m.group(1).strip().strip("\"'") if m else ""
     t = re.search(r"^tags:[ \t]*(.*)$", fm, re.M)
     tags = t.group(1).strip() if t else ""
-    return raw, title or path, tags
+    draft = bool(re.search(r"^draft:[ \t]*true[ \t]*$", fm, re.M | re.I))
+    return raw, title or path, tags, draft
 
 
 def has_tags(tags):
@@ -101,8 +102,10 @@ def main(argv):
     targets = []
     for path in paths:
         try:
-            raw, title, tags = read_info(path)
+            raw, title, tags, draft = read_info(path)
         except OSError:
+            continue
+        if draft:                       # 草稿不打扰
             continue
         if not has_tags(tags):
             targets.append((path, title))

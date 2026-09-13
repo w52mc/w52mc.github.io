@@ -330,6 +330,26 @@ if [ "$SKIP_TAGS" = "0" ]; then
   fi
 fi
 
+# ── 2.5 格式化改动过的文件 ────────────────────────────────────────────
+
+step "格式化"
+
+FMT_FILES=$(git status --porcelain \
+  | awk '{print $NF}' \
+  | grep -E '\.(md|mdx|astro|ts|tsx|js|jsx|json|css)$' 2>/dev/null || true)
+
+if [ -z "${FMT_FILES:-}" ]; then
+  info "没有需要格式化的文件"
+elif ! command -v pnpm >/dev/null 2>&1; then
+  warn "找不到 pnpm，跳过格式化"
+else
+  if printf '%s\n' "$FMT_FILES" | xargs pnpm exec prettier --write --log-level warn 2>&1 | sed 's/^/    /'; then
+    ok "已格式化 $(printf '%s\n' "$FMT_FILES" | grep -c . || true) 个文件"
+  else
+    warn "格式化失败，已跳过（不影响发布）"
+  fi
+fi
+
 # ── 3. 生成提交信息 ───────────────────────────────────────────────────
 
 step "生成提交信息"
